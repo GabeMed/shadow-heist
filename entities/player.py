@@ -3,7 +3,7 @@ from enum import Enum, auto
 from panda3d.core import (
     CollisionSphere, CollisionNode,
     CollisionSegment, CollisionHandlerQueue, CollisionTraverser,
-    BitMask32, Point3, TransparencyAttrib, Material, Vec3,
+    BitMask32, Point3, TransparencyAttrib, Shader, Vec3, Vec4, PointLight,
 )
 
 
@@ -81,7 +81,7 @@ class Player:
         self.setup_collision()
         self.setup_cam_collision()
 
-        self.body_scale         = Vec3(1.1, 1.1, 0.85)
+        self.body_scale         = Vec3(1.3, 1.3, 1.3)
         self.cam_dist_current   = self.CAM_DIST_MAX
         self.cam_height_current = float(self.CAM_HEIGHT)
         self.state              = PlayerState.IDLE
@@ -97,15 +97,15 @@ class Player:
         }
 
         bindings = [
-            ("w",           "forward"),  ("control-w",   "forward"),
+            ("w",           "forward"),  ("control-w",  "forward"),  ("shift-w",  "forward"),
             ("arrow_up",    "forward"),
-            ("s",           "backward"), ("control-s",   "backward"),
+            ("s",           "backward"), ("control-s",  "backward"), ("shift-s",  "backward"),
             ("arrow_down",  "backward"),
-            ("a",           "left"),     ("control-a",   "left"),
+            ("a",           "left"),     ("control-a",  "left"),     ("shift-a",  "left"),
             ("arrow_left",  "left"),
-            ("d",           "right"),    ("control-d",   "right"),
+            ("d",           "right"),    ("control-d",  "right"),    ("shift-d",  "right"),
             ("arrow_right", "right"),
-            ("lcontrol",    "crouch"),
+            ("lshift",      "crouch"),
         ]
         for key, action in bindings:
             self.base.accept(key,          self.update_key_map, [action, True])
@@ -143,32 +143,41 @@ class Player:
 
     def _build_slime(self):
         """Constrói o corpo + olhos da Criatura Ladrão."""
-        self.model = self.base.loader.loadModel("misc/sphere")
+        # ── Corpo ──────────────────────────────────────────────────────
+        self.model = self.base.loader.loadModel("assets/slime.egg")
         self.model.reparentTo(self.player_node)
-        self.model.setScale(1.1, 1.1, 0.85)
+        self.model.setScale(1.3, 1.3, 1.3)
+        self.model.setP(90)  # corrige modelo de Y-up (deitado → em pé)
+        self.model.setH(180)
 
-        mat = Material()
-        mat.setDiffuse((0.05, 0.05, 0.07, 1))
-        mat.setAmbient((0.02, 0.02, 0.025, 1))
-        mat.setSpecular((0.25, 0.30, 0.40, 1))
-        mat.setShininess(90)
-        self.model.setMaterial(mat)
-        self.model.setShaderAuto()
+        shader = Shader.load(
+            Shader.SL_GLSL,
+            vertex="shaders/slime.vert",
+            fragment="shaders/slime.frag",
+        )
+        self.model.setShader(shader)
+        self.model.setShaderInput("light_color",   Vec4(0.7, 0.7,  0.7,  1))
+        self.model.setShaderInput("ambient_color",  Vec4(0.3, 0.3,  0.3,  1))
+        self.model.setShaderInput("rim_color",      Vec4(0.15, 0.45, 1.0, 1))
+        self.model.setShaderInput("rim_power",      3.5)
+        self.model.setShaderInput("time",           0.0)
+        # light_dir_view é atualizado por frame em control_task
+        self.model.setShaderInput("light_dir_view", Vec3(0, 0, 1))
 
-        # Dois olhos amarelo-âmbar na frente-topo do corpo
-        for x in (-0.42, 0.42):
-            eye = self.base.loader.loadModel("misc/sphere")
-            eye.reparentTo(self.model)
-            eye.setScale(0.17)
-            eye.setPos(x, 0.88, 0.52)
-            eye.setColor(1.0, 0.85, 0.15, 1)
+        # PointLight na altura dos olhos do modelo — ilumina o ambiente próximo
+        eye_light = PointLight("eye_light")
+        eye_light.setColor((0.9, 0.70, 0.10, 1))
+        eye_light.setAttenuation((1, 0, 0.05))
+        self.eye_light_np = self.player_node.attachNewNode(eye_light)
+        self.eye_light_np.setPos(0, 0.8, 0.5)
+        self.base.render.setLight(self.eye_light_np)
 
     def _apply_squish(self, dt):
         """Lerp linear da escala do corpo com base no estado atual."""
         targets = {
-            PlayerState.IDLE:   Vec3(1.10, 1.10, 0.85),
-            PlayerState.WALK:   Vec3(0.95, 1.35, 0.75),
-            PlayerState.CROUCH: Vec3(1.35, 1.35, 0.65),
+            PlayerState.IDLE:   Vec3(1.30, 1.30, 1.30),
+            PlayerState.WALK:   Vec3(1.15, 1.10, 1.55),
+            PlayerState.CROUCH: Vec3(1.60, 0.95, 1.60),
         }
         target = targets[self.state]
         step = self.SQUISH_SPEED * dt
@@ -200,6 +209,12 @@ class Player:
         dt = self.base.clock.getDt()
 
         self._update_state(dt)
+
+        # Atualiza inputs do shader: wobble time + direção da luz em view space
+        ld = Vec3(0.5, -0.5, 1.0).normalized()
+        self.model.setShaderInput("light_dir_view",
+            self.base.render.getRelativeVector(self.base.camera, ld))
+        self.model.setShaderInput("time", self.base.clock.getFrameTime())
 
         speed = self.WALK_SPEED * (
             self.CROUCH_SPEED_MULT if self.state == PlayerState.CROUCH else 1.0
