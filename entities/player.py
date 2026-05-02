@@ -3,7 +3,7 @@ from enum import Enum, auto
 from panda3d.core import (
     CollisionSphere, CollisionNode,
     CollisionSegment, CollisionHandlerQueue, CollisionTraverser,
-    BitMask32, Point3, TransparencyAttrib,
+    BitMask32, Point3, TransparencyAttrib, Material, Vec3,
 )
 
 
@@ -45,6 +45,9 @@ class Player:
     # ── Câmera – dolly por obstáculos ────────────────────────────────────
     CAM_ZOOM_SPEED   = 10.0   # unidades/seg ao recuar após obstáculo sair
 
+    # ── Squish ────────────────────────────────────────────────────────────
+    SQUISH_SPEED      = 9.0   # unidades/seg de transição de escala
+
     # ── Estados ───────────────────────────────────────────────────────────
     CROUCH_SPEED_MULT = 0.45  # fator de velocidade ao agachar
     CAM_CROUCH_HEIGHT = 1.2   # altura da câmera ao agachar
@@ -62,12 +65,7 @@ class Player:
         self.player_node = self.base.render.attachNewNode("player_node")
         self.player_node.setPos(0, 0, 1)
 
-        self.model = self.base.loader.loadModel("smiley")
-        self.model.reparentTo(self.player_node)
-        # O smiley vem do Panda3D com a face apontando -Y. Como o player_node
-        # considera +Y como frente, giramos o modelo 180° para alinhar a face
-        # à direção de movimento (e deixar a câmera atrás vendo a nuca).
-        self.model.setH(180)
+        self._build_slime()
 
         # ── Floater: alvo da câmera, sempre acima da cabeça do player ──
         self.floater = self.base.render.attachNewNode("floater")
@@ -83,6 +81,7 @@ class Player:
         self.setup_collision()
         self.setup_cam_collision()
 
+        self.body_scale         = Vec3(1.1, 1.1, 0.85)
         self.cam_dist_current   = self.CAM_DIST_MAX
         self.cam_height_current = float(self.CAM_HEIGHT)
         self.state              = PlayerState.IDLE
@@ -141,6 +140,45 @@ class Player:
 
         self.cam_seg_np = self.base.render.attachNewNode(seg_node)
         self.cam_trav.addCollider(self.cam_seg_np, self.cam_queue)
+
+    def _build_slime(self):
+        """Constrói o corpo + olhos da Criatura Ladrão."""
+        self.model = self.base.loader.loadModel("misc/sphere")
+        self.model.reparentTo(self.player_node)
+        self.model.setScale(1.1, 1.1, 0.85)
+
+        mat = Material()
+        mat.setDiffuse((0.05, 0.05, 0.07, 1))
+        mat.setAmbient((0.02, 0.02, 0.025, 1))
+        mat.setSpecular((0.25, 0.30, 0.40, 1))
+        mat.setShininess(90)
+        self.model.setMaterial(mat)
+        self.model.setShaderAuto()
+
+        # Dois olhos amarelo-âmbar na frente-topo do corpo
+        for x in (-0.42, 0.42):
+            eye = self.base.loader.loadModel("misc/sphere")
+            eye.reparentTo(self.model)
+            eye.setScale(0.17)
+            eye.setPos(x, 0.88, 0.52)
+            eye.setColor(1.0, 0.85, 0.15, 1)
+
+    def _apply_squish(self, dt):
+        """Lerp linear da escala do corpo com base no estado atual."""
+        targets = {
+            PlayerState.IDLE:   Vec3(1.10, 1.10, 0.85),
+            PlayerState.WALK:   Vec3(0.95, 1.35, 0.75),
+            PlayerState.CROUCH: Vec3(1.35, 1.35, 0.65),
+        }
+        target = targets[self.state]
+        step = self.SQUISH_SPEED * dt
+        for i in range(3):
+            diff = target[i] - self.body_scale[i]
+            if abs(diff) <= step:
+                self.body_scale[i] = target[i]
+            else:
+                self.body_scale[i] += math.copysign(step, diff)
+        self.model.setScale(self.body_scale)
 
     def attach_camera(self, camera):
         """Reposiciona a câmera atrás do personagem (saída do free-cam)."""
@@ -208,6 +246,8 @@ class Player:
             self.cam_height_current = target_h
         else:
             self.cam_height_current += math.copysign(step, diff)
+
+        self._apply_squish(dt)
 
         # Tick dos timers de camuflagem
         if self.is_camouflaged:
