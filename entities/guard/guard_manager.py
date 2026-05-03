@@ -1,4 +1,4 @@
-# src/guard/guard_manager.py
+# entities/guard/guard_manager.py
 """
 GuardManager — Phase 3
 -----------------------
@@ -211,8 +211,7 @@ class GuardManager:
         self._body_scan_timer = BODY_SCAN_INTERVAL
 
         # Collect all body nodes currently in the scene.
-        bodies: list[NodePath] = self._base.render.findAllMatches(
-            f"**" ).asList()
+        bodies: list[NodePath] = list(self._base.render.findAllMatches("**"))
         body_positions: list[Point3] = []
         for np in bodies:
             if np.hasTag("guard_body"):

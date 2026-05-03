@@ -1,4 +1,4 @@
-# src/guard/waypoint.py
+# entities/guard/waypoint.py
 """
 Waypoint dataclass.
 A guard's patrol route is a list of Waypoint instances.

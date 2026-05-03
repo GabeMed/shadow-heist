@@ -1,4 +1,4 @@
-# src/guard/alert_state.py
+# entities/guard/alert_state.py
 """
 AlertState — Phase 3
 ---------------------

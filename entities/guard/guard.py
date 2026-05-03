@@ -1,4 +1,4 @@
-# src/guard/guard.py
+# entities/guard/guard.py
 """
 Guard — Phase 3
 ---------------
