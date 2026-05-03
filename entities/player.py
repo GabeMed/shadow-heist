@@ -11,6 +11,7 @@ class PlayerState(Enum):
     IDLE   = auto()
     WALK   = auto()
     CROUCH = auto()
+    GRAB   = auto()
 
 
 class Player:
@@ -56,6 +57,16 @@ class Player:
     CROUCH_SPEED_MULT      = 0.45  # fator de velocidade ao agachar
     CROUCH_TRANSITION_TIME = 0.08  # segundos exibindo o modelo de transição
 
+    # ── Grab ──────────────────────────────────────────────────────────────
+    GRAB_T1_TIME   = 0.07  # segundos por frame de transição (t1 entrada/saída)
+    GRAB_T2_TIME   = 0.07  # segundos por frame de transição (t2 entrada/saída)
+    GRAB_HOLD_TIME = 0.10  # segundos no pico do grab
+
+    # ── Pulo ──────────────────────────────────────────────────────────────
+    JUMP_SPEED   = 10.0  # velocidade vertical inicial do pulo (u/s)
+    GRAVITY      = 28.0  # aceleração gravitacional (u/s²)
+    GROUND_LEVEL = 1.1   # Z mínimo do player_node (raio da CollisionSphere)
+
     # ── Camuflagem ────────────────────────────────────────────────────────
     CAMO_ALPHA        = 0.22  # opacidade do modelo ao camuflado
     CAMO_DURATION     = 1.0   # segundos de duração da camuflagem
@@ -90,7 +101,13 @@ class Player:
         self.cam_pitch             = self.CAM_PITCH_DEFAULT
         self.cam_pitch_adj         = 0.0
         self.state                 = PlayerState.IDLE
-        self.crouch_transition_timer = 0.0  # > 0 enquanto exibe modelo de transição
+        self.crouch_transition_timer = 0.0
+        self.vel_z            = 0.0   # velocidade vertical atual
+        self.is_grounded      = True  # False enquanto estiver no ar
+        self.land_squash_timer = 0.0  # segundos de squash de aterrissagem restantes
+        # 0=inativo; 1=t1_in 2=t2_in 3=hold 4=t2_out 5=t1_out
+        self.grab_phase       = 0
+        self.grab_phase_timer = 0.0
         self.is_camouflaged      = False
         self.camo_active_timer   = 0.0  # tempo restante de camuflagem ativa
         self.camo_cooldown_timer = 0.0  # tempo restante de cooldown
@@ -117,7 +134,9 @@ class Player:
             self.base.accept(key,          self.update_key_map, [action, True])
             self.base.accept(key + "-up",  self.update_key_map, [action, False])
 
-        self.base.accept("e", self.toggle_camouflage)
+        self.base.accept("e",      self.toggle_camouflage)
+        self.base.accept("space",  self.do_jump)
+        self.base.accept("mouse1", self.do_grab)
 
         self.base.taskMgr.add(self.control_task, "control_task")
 
@@ -190,6 +209,13 @@ class Player:
         self.model_crunch_t1.hide()
         self.model_crunch.hide()
 
+        self.model_grab_t1 = _load_centered("assets/player-grab-t1.egg", "model_grab_t1")
+        self.model_grab_t2 = _load_centered("assets/player-grab-t2.egg", "model_grab_t2")
+        self.model_grab    = _load_centered("assets/player-grab.egg",    "model_grab")
+        self.model_grab_t1.hide()
+        self.model_grab_t2.hide()
+        self.model_grab.hide()
+
         self.model = self.model_normal
 
         # PointLight at eye level
@@ -202,7 +228,13 @@ class Player:
 
     def _update_active_model(self):
         """Swap the visible model wrapper when the state changes; transfer camo."""
-        if self.crouch_transition_timer > 0:
+        if self.grab_phase in (1, 5):
+            target = self.model_grab_t1
+        elif self.grab_phase in (2, 4):
+            target = self.model_grab_t2
+        elif self.grab_phase == 3:
+            target = self.model_grab
+        elif self.crouch_transition_timer > 0:
             target = self.model_crunch_t1
         elif self.state == PlayerState.CROUCH:
             target = self.model_crunch
@@ -222,13 +254,21 @@ class Player:
         self.model.setScale(self.body_scale)
 
     def _apply_squish(self, dt):
-        """Lerp linear da escala do corpo com base no estado atual."""
-        targets = {
-            PlayerState.IDLE:   Vec3(1.30, 1.30, 1.30),
-            PlayerState.WALK:   Vec3(1.35, 1.35, 1.25),
-            PlayerState.CROUCH: Vec3(1.30, 1.30, 1.30),  # crunch model is already the crouched pose
-        }
-        target = targets[self.state]
+        """Lerp linear da escala do corpo com base no estado atual e física de pulo."""
+        if self.land_squash_timer > 0:
+            target = Vec3(1.55, 1.55, 0.80)   # aterrissou: largo e achatado
+        elif not self.is_grounded and self.vel_z > 0:
+            target = Vec3(0.90, 0.90, 1.55)   # subindo: estica verticalmente
+        elif not self.is_grounded:
+            target = Vec3(0.95, 0.95, 1.30)   # caindo: estica suave
+        else:
+            targets = {
+                PlayerState.IDLE:   Vec3(1.30, 1.30, 1.30),
+                PlayerState.WALK:   Vec3(1.35, 1.35, 1.25),
+                PlayerState.CROUCH: Vec3(1.30, 1.30, 1.30),
+                PlayerState.GRAB:   Vec3(1.30, 1.30, 1.30),
+            }
+            target = targets[self.state]
         step = self.SQUISH_SPEED * dt
         for i in range(3):
             diff = target[i] - self.body_scale[i]
@@ -251,6 +291,21 @@ class Player:
     def update_key_map(self, key, state):
         self.key_map[key] = state
 
+    def do_grab(self):
+        if getattr(self.base, 'game_paused', True):
+            return
+        if self.grab_phase != 0:
+            return  # animação já em andamento
+        self.grab_phase       = 1
+        self.grab_phase_timer = self.GRAB_T1_TIME
+
+    def do_jump(self):
+        if getattr(self.base, 'game_paused', True):
+            return
+        if self.is_grounded and self.state != PlayerState.CROUCH and self.grab_phase == 0:
+            self.vel_z       = self.JUMP_SPEED
+            self.is_grounded = False
+
     # ── Loop de atualização ──────────────────────────────────────────────
     def control_task(self, task):
         if getattr(self.base, 'game_paused', True):
@@ -264,7 +319,8 @@ class Player:
         ld = Vec3(0.5, -0.5, 1.0).normalized()
         lv = self.base.render.getRelativeVector(self.base.camera, ld)
         ft = self.base.clock.getFrameTime()
-        for m in (self.model_normal, self.model_crunch_t1, self.model_crunch):
+        for m in (self.model_normal, self.model_crunch_t1, self.model_crunch,
+                  self.model_grab_t1, self.model_grab_t2, self.model_grab):
             m.setShaderInput("light_dir_view", lv)
             m.setShaderInput("time", ft)
 
@@ -284,6 +340,17 @@ class Player:
         if self.key_map["backward"]:
             self.player_node.setY(self.player_node, -speed * dt)
 
+        # ── Física vertical (gravidade + pulo) ───────────────────────
+        if not self.is_grounded:
+            self.vel_z -= self.GRAVITY * dt
+            self.player_node.setZ(self.player_node.getZ() + self.vel_z * dt)
+            if self.player_node.getZ() <= self.GROUND_LEVEL:
+                if self.vel_z < -3.0:
+                    self.land_squash_timer = 0.18
+                self.player_node.setZ(self.GROUND_LEVEL)
+                self.vel_z       = 0.0
+                self.is_grounded = True
+
         # ── Câmera: rotação manual via mouse + dolly por obstáculos ───
         if not getattr(self.base, 'free_cam_active', False):
             self._handle_mouse()
@@ -293,10 +360,31 @@ class Player:
 
     # ── Máquina de estados ───────────────────────────────────────────────
     def _update_state(self, dt):
+        # Tick do grab — avança fases da animação
+        if self.grab_phase != 0:
+            self.grab_phase_timer -= dt
+            if self.grab_phase_timer <= 0:
+                _phase_durations = {
+                    1: self.GRAB_T1_TIME,
+                    2: self.GRAB_T2_TIME,
+                    3: self.GRAB_HOLD_TIME,
+                    4: self.GRAB_T2_TIME,
+                    5: self.GRAB_T1_TIME,
+                }
+                next_phase = self.grab_phase + 1
+                if next_phase > 5:
+                    self.grab_phase       = 0
+                    self.grab_phase_timer = 0.0
+                else:
+                    self.grab_phase       = next_phase
+                    self.grab_phase_timer = _phase_durations[next_phase]
+
         is_moving    = self.key_map["forward"] or self.key_map["backward"]
         is_crouching = self.key_map["crouch"]
 
-        if is_crouching:
+        if self.grab_phase != 0:
+            new_state = PlayerState.GRAB
+        elif is_crouching:
             new_state = PlayerState.CROUCH
         elif is_moving:
             new_state = PlayerState.WALK
@@ -324,6 +412,10 @@ class Player:
             self.cam_pitch_adj += math.copysign(step, diff)
 
         self._apply_squish(dt)
+
+        # Tick do timer de squash de aterrissagem
+        if self.land_squash_timer > 0:
+            self.land_squash_timer = max(0.0, self.land_squash_timer - dt)
 
         # Tick dos timers de camuflagem
         if self.is_camouflaged:
