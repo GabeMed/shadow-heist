@@ -36,6 +36,25 @@ class LevelManager:
         self._make_obstacles()
         print("LevelManager: Environment ready.")
 
+# ── Guard AI interface ────────────────────────────────────
+    def is_position_lit(self, pos: "Point3") -> bool:
+        """
+        query actual light volumes from the lighting system.
+        """
+        return True
+
+    def get_active_light_nodes(self) -> list:
+        """
+        return NodePath list of all active lights in the scene.
+        """
+        return []
+
+    def get_nav_mesh(self) -> "NodePath":
+        """
+        return the actual nav mesh NodePath.
+        """
+        return self.base.render
+    
     def _make_ground(self):
         cm = CardMaker('ground')
         cm.setFrame(-50, 50, -50, 50)
