@@ -100,10 +100,10 @@ ITEMS = {
     },
     "ruby": {
         "value":     50,
-        "color":    (0.85, 0.02, 0.02, 1.0),
-        "shape":    "sphere",
-        "scale":    (0.45, 0.45, 0.22),   # cabochon: largo e baixo
-        "ground_z":  0.22,
+        "color":    (0.9, 0.05, 0.2, 0.8),
+        "shape":    "gem",
+        "scale":    (0.4, 0.25, 0.45),
+        "ground_z":  0.45,
     },
     "coin_pile": {
         "value":     20,

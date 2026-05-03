@@ -2,7 +2,7 @@ import math
 from panda3d.core import (
     GeomVertexFormat, GeomVertexData, GeomVertexWriter,
     Geom, GeomTriangles, GeomNode, NodePath,
-    TransparencyAttrib,
+    TransparencyAttrib, CullFaceAttrib
 )
 import config
 
@@ -73,7 +73,6 @@ def _build_box(w, d, h):
     )
     return _geom_from_triangles(faces)
 
-
 def _build_trapezoid_prism(hw_bot, hd_bot, height, taper=0.82):
     """
     Prisma trapezoidal centrado na origem — topo afunilado em relação à base.
@@ -123,6 +122,36 @@ def _build_octahedron(radius, ht, hb):
         faces.append((bot, b, a))      # pirâmide inferior (winding invertido)
     return _geom_from_triangles(faces)
 
+def _build_gem(radius, height_top, height_bot, facets=8):
+    """
+    Cria uma joia facetada (estilo diamante/rubi).
+    facets: número de faces laterais (8 para um corte clássico, 12+ para mais brilho).
+    """
+    hh_t = height_top
+    hh_b = -height_bot
+    angles = [2 * math.pi * i / facets for i in range(facets)]
+    
+    # Vértices do equador (o "cinto" da joia)
+    eq = [(radius * math.cos(a), radius * math.sin(a), 0) for a in angles]
+    # Vértice do topo (achatado para criar a "mesa")
+    table_radius = radius * 0.5
+    top = [(table_radius * math.cos(a), table_radius * math.sin(a), hh_t) for a in angles]
+    center_top = (0, 0, hh_t)
+    # Vértice de baixo (o culet)
+    bot = (0, 0, hh_b)
+
+    faces = []
+    for i in range(facets):
+        j = (i + 1) % facets
+        # Mesa (topo plano)
+        faces.append((center_top, top[i], top[j]))
+        # Coroa (lados inclinados superiores)
+        faces.append((top[i], eq[i], eq[j]))
+        faces.append((top[i], eq[j], top[j]))
+        # Pavilhão (lados inclinados inferiores que levam à ponta)
+        faces.append((bot, eq[j], eq[i]))
+
+    return _geom_from_triangles(faces)
 
 def _build_cylinder(radius, height, segments=20):
     """
@@ -231,33 +260,44 @@ class GrabbableObject:
 
     # ── Highlight pulsante ────────────────────────────────────────────────
 
+    def _setup_outline_node(node_path, scale_offset=1.1):
+        # Cria uma cópia da geometria
+        outline = node_path.copyTo(node_path.getParent())
+        outline.setScale(node_path.getScale() * scale_offset)
+        
+        # Inverte para renderizar as faces internas (vistas por fora)
+        outline.setAttrib(CullFaceAttrib.make(CullFaceAttrib.MCullClockwise)) 
+        
+        # Configurações de brilho e transparência
+        outline.setLightOff()
+        outline.setBin("transparent", 10)
+        outline.setDepthWrite(False)
+        return outline
+
     def _build_highlight(self, cfg):
-        scale = cfg["scale"]
-        shape = cfg["shape"]
+        # Criamos um container para o highlight
+        self.highlight_np = self.node.attachNewNode("highlight_group")
+        
+        # Pegamos todas as partes visuais do item (caixas, cilindros, etc)
+        for child in self.node.getChildren():
+            if child == self.highlight_np: continue # Não clonar o próprio highlight
+            
+            # Clona a parte visual
+            hl_part = child.copyTo(self.highlight_np)
+            
+            # O truque do contorno: escala levemente maior (ex: 1.05)
+            hl_part.setScale(child.getScale() * 1.08)
+            
+            # Remove texturas/luzes e define a cor do brilho (amarelo claro)
+            hl_part.setLightOff()
+            hl_part.setColorScale(1.0, 1.0, 0.5, config.HIGHLIGHT_ALPHA_MIN)
+            
+            # Renderiza apenas as faces de trás (cria o efeito de borda)
+            hl_part.setTwoSided(False)
+            hl_part.setAttrib(CullFaceAttrib.make(CullFaceAttrib.MCullClockwise))
 
-        if shape == "necklace":
-            hl_r = (config.NECKLACE_ARC_RADIUS + config.NECKLACE_PEARL_RADIUS) \
-                   * config.HIGHLIGHT_SCALE_FACTOR
-        elif shape == "trapezoid":
-            hl_r = scale[0] * config.HIGHLIGHT_SCALE_FACTOR          # hw_bot
-        elif shape == "octahedron":
-            hl_r = max(scale[0], scale[1]) * config.HIGHLIGHT_SCALE_FACTOR
-        elif shape == "cylinder":
-            hl_r = scale[0] * config.HIGHLIGHT_SCALE_FACTOR          # radius
-        elif shape == "money_bundle":
-            hl_r = (scale[0] / 2) * config.HIGHLIGHT_SCALE_FACTOR    # metade da largura
-        else:
-            hl_r = max(scale) * config.HIGHLIGHT_SCALE_FACTOR
-
-        hl = self.base.loader.loadModel("models/misc/sphere")
-        hl.reparentTo(self.node)
-        hl.setScale(hl_r)
-        hl.setLightOff()
-        hl.setTransparency(TransparencyAttrib.M_alpha)
-        hl.setColorScale(1.0, 1.0, 0.2, config.HIGHLIGHT_ALPHA_MIN)
-        hl.setDepthWrite(False)
-        hl.setBin("transparent", 10)
-        self.highlight_np = hl
+        self.highlight_np.setTransparency(TransparencyAttrib.M_alpha)
+        self.highlight_np.setDepthWrite(False)
 
     def update_highlight(self, t):
         lo    = config.HIGHLIGHT_ALPHA_MIN

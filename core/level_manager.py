@@ -36,6 +36,17 @@ class LevelManager:
         self._make_obstacles()
         print("LevelManager: Environment ready.")
 
+    # ── Interface para o sistema de guardas ───────────────────────────────
+
+    def is_position_lit(self, pos) -> bool:
+        return True
+
+    def get_active_light_nodes(self) -> list:
+        return []
+
+    def get_nav_mesh(self):
+        return self.base.render
+
     def _make_ground(self):
         cm = CardMaker('ground')
         cm.setFrame(-50, 50, -50, 50)
