@@ -611,3 +611,23 @@ class Player:
         self.floater.setPos(player_pos)
         self.floater.setZ(player_pos.z + Cfg.FLOATER_Z_OFFSET * self.growth_scale)
         self.base.camera.lookAt(self.floater)
+
+    # ── Interface para o sistema de guardas ───────────────────────────────
+
+    def get_position(self) -> Point3:
+        return Point3(self.player_node.getPos())
+
+    def get_size_factor(self) -> float:
+        return self.growth_scale
+
+    def get_is_sprinting(self) -> bool:
+        return False  # sprint não implementado ainda
+
+    def get_is_crouching(self) -> bool:
+        return self.state == PlayerState.CROUCH
+
+    def get_node_path(self):
+        return self.player_node
+
+    def is_visible(self) -> bool:
+        return not self.is_camouflaged
