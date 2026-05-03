@@ -6,6 +6,7 @@ from panda3d.core import loadPrcFileData
 
 from core.level_manager import LevelManager
 from entities.player import Player
+from entities.item_manager import ItemManager
 
 # Força o mouse a ficar preso dentro da janela (Modo Grab)
 loadPrcFileData("", "mouse-mode absolute") 
@@ -38,6 +39,7 @@ class ShadowHeist(ShowBase):
 
         self.level_manager = LevelManager(self)
         self.player        = Player(self)
+        self.item_manager  = ItemManager(self)
 
         self._build_menu()
         self._show_menu()
