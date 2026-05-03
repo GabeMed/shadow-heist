@@ -21,16 +21,6 @@ pip install panda3d
 python main.py
 ```
 
-## Running the guard AI test scene (standalone, no game needed)
-
-```bash
-python main_test.py
-```
-
----
-
----
-
 ## Guard AI test controls
 
 | Key | Action |

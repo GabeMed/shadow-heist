@@ -1,19 +1,13 @@
 # main.py
-"""
-Shadow Heist — main entry point.
-Phase 4: GuardManager and guards integrated into the live game.
-"""
-
 from direct.showbase.ShowBase import ShowBase
 from direct.gui.DirectGui import DirectButton, DirectFrame
 from direct.gui.OnscreenText import OnscreenText
-from panda3d.core import (
-    WindowProperties, CollisionTraverser, CollisionHandlerPusher,
-    Point3, loadPrcFileData,
-)
+from panda3d.core import WindowProperties, CollisionTraverser, CollisionHandlerPusher
+from panda3d.core import loadPrcFileData, Point3
 
 from core.level_manager import LevelManager
 from entities.player import Player
+from entities.item_manager import ItemManager
 from entities.guard.guard import Guard
 from entities.guard.guard_manager import GuardManager
 from entities.guard.waypoint import Waypoint
@@ -25,8 +19,8 @@ loadPrcFileData("", "win-unfocused-input 1")
 loadPrcFileData("", "want-directtools 0")
 loadPrcFileData("", "want-tk 0")
 
-# ── patrol routes ─────────────────────────────────────────────────────────────
-#   Adjust these positions to match your actual mansion layout.
+# ── Patrol routes ─────────────────────────────────────────────────────────────
+# Adjust these to match your mansion layout once Teammate B's map is final.
 GUARD_A_WAYPOINTS = [
     Waypoint(Point3( 10,  10, 0), wait_time=2.0),
     Waypoint(Point3( 10, -10, 0), wait_time=1.5),
@@ -34,8 +28,10 @@ GUARD_A_WAYPOINTS = [
     Waypoint(Point3(-10,  10, 0), wait_time=1.5),
 ]
 GUARD_B_WAYPOINTS = [
-    Waypoint(Point3(0,  15, 0), wait_time=3.0),
-    Waypoint(Point3(0,  -5, 0), wait_time=1.0),
+    Waypoint(Point3( 0,  15, 0), wait_time=3.0),
+    Waypoint(Point3( 5,   0, 0), wait_time=1.0),
+    Waypoint(Point3( 0, -10, 0), wait_time=2.0),
+    Waypoint(Point3(-5,   0, 0), wait_time=1.0),
 ]
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -60,27 +56,27 @@ class ShadowHeist(ShowBase):
         self.game_started    = False
         self.free_cam_active = False
 
-        # ── game objects ──────────────────────────────────────────────────
+        # ── Game objects (order matters — guards need player + level ready) ──
         self.level_manager = LevelManager(self)
         self.player        = Player(self)
+        self.item_manager  = ItemManager(self)
 
-        # ── guard AI ──────────────────────────────────────────────────────
+        # ── Guard AI ──────────────────────────────────────────────────────────
         self._setup_guards()
 
-        # ── menu ──────────────────────────────────────────────────────────
+        # ── Menu ──────────────────────────────────────────────────────────────
         self._build_menu()
         self._show_menu()
 
-        # ── keybinds ──────────────────────────────────────────────────────
         self.accept("escape", self.toggle_pause)
-        self.accept("f1",     self.toggle_free_cam)   # moved from "c" — c is crouch
+        self.accept("c",      self.toggle_free_cam)
 
-    # ── guard setup ───────────────────────────────────────────────────────────
+    # ── Guard setup ───────────────────────────────────────────────────────────
 
     def _setup_guards(self) -> None:
         """
-        Wire integration adapters, create guards, hand them to GuardManager.
-        Called once during __init__, after level_manager and player exist.
+        Wire integration adapters, spawn guards, start GuardManager.
+        Called after level_manager and player are fully initialised.
         """
         player_iface = PlayerInterface(self.player)
         env_iface    = EnvInterface(self.level_manager)
@@ -107,11 +103,12 @@ class ShadowHeist(ShowBase):
         self.guard_manager.start()
 
         print(
-            f"[ShadowHeist] Guard AI ready. "
-            f"Player: {player_iface}  Env: {env_iface}"
+            f"[ShadowHeist] Guards ready. "
+            f"Player={player_iface}  Env={env_iface}  "
+            f"Alert level={self.guard_manager.get_alert_level()}"
         )
 
-    # ── mouse lock ────────────────────────────────────────────────────────────
+    # ── Mouse lock ────────────────────────────────────────────────────────────
 
     def lock_mouse(self):
         self.win.setActive(True)
@@ -129,7 +126,7 @@ class ShadowHeist(ShowBase):
         props.setMouseMode(WindowProperties.M_absolute)
         self.win.requestProperties(props)
 
-    # ── menu ──────────────────────────────────────────────────────────────────
+    # ── Menu ──────────────────────────────────────────────────────────────────
 
     def _build_menu(self):
         self.menu_root = DirectFrame(
@@ -139,23 +136,29 @@ class ShadowHeist(ShowBase):
         )
         OnscreenText(
             text="SHADOW HEIST",
-            pos=(0, 0.28), scale=0.13,
-            fg=(1, 1, 1, 1), shadow=(0, 0, 0, 1),
+            pos=(0, 0.28),
+            scale=0.13,
+            fg=(1, 1, 1, 1),
+            shadow=(0, 0, 0, 1),
             parent=self.menu_root,
         )
         self._btn_play = DirectButton(
             text="JOGAR",
-            scale=0.09, pos=(0, 0, 0.05),
+            scale=0.09,
+            pos=(0, 0, 0.05),
             relief=None,
-            text_fg=(1, 1, 1, 1), text_shadow=(0, 0, 0, 1),
+            text_fg=(1, 1, 1, 1),
+            text_shadow=(0, 0, 0, 1),
             command=self._resume_game,
             parent=self.menu_root,
         )
         DirectButton(
             text="SAIR",
-            scale=0.09, pos=(0, 0, -0.13),
+            scale=0.09,
+            pos=(0, 0, -0.13),
             relief=None,
-            text_fg=(0.85, 0.3, 0.3, 1), text_shadow=(0, 0, 0, 1),
+            text_fg=(0.85, 0.3, 0.3, 1),
+            text_shadow=(0, 0, 0, 1),
             command=self.userExit,
             parent=self.menu_root,
         )
@@ -181,7 +184,7 @@ class ShadowHeist(ShowBase):
         else:
             self._show_menu()
 
-    # ── dev free cam ──────────────────────────────────────────────────────────
+    # ── Dev free cam ──────────────────────────────────────────────────────────
 
     def toggle_free_cam(self):
         if self.game_paused:
@@ -192,12 +195,12 @@ class ShadowHeist(ShowBase):
             self.camera.reparentTo(self.render)
             self.unlock_mouse()
             self.enableMouse()
-            print("Dev: Free Camera ON  (F1 to return)")
+            print("Dev: Câmera Livre Ativada")
         else:
             self.disableMouse()
             self.lock_mouse()
             self.player.attach_camera(self.camera)
-            print("Dev: Third-Person Camera ON")
+            print("Dev: Câmera em Terceira Pessoa Ativada")
 
 
 if __name__ == "__main__":
