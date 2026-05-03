@@ -1,7 +1,7 @@
 import math
 from enum import Enum, auto
 from panda3d.core import (
-    CollisionSphere, CollisionNode,
+    CollisionSphere, CollisionNode, NodePath,
     CollisionSegment, CollisionHandlerQueue, CollisionTraverser,
     BitMask32, Point3, TransparencyAttrib, Shader, Vec3, Vec4, PointLight,
 )
