@@ -1,7 +1,7 @@
 import math
 from enum import Enum, auto
 from panda3d.core import (
-    CollisionSphere, CollisionNode,
+    CollisionSphere, CollisionNode, NodePath,
     CollisionSegment, CollisionHandlerQueue, CollisionTraverser,
     BitMask32, Point3, TransparencyAttrib, Shader, Vec3, Vec4, PointLight,
 )
@@ -305,6 +305,37 @@ class Player:
         if self.is_grounded and self.state != PlayerState.CROUCH and self.grab_phase == 0:
             self.vel_z       = self.JUMP_SPEED
             self.is_grounded = False
+
+    # ── Guard AI interface ────────────────────────────────────
+    def get_position(self) -> Point3:
+        """Returns the player's current world position."""
+        return self.player_node.getPos()
+
+    def get_size_factor(self) -> float:
+        """
+        Normalised growth scale for guard detection.
+        Baseline body_scale is 1.3 on all axes; returns a float in [1.0, ~3.0].
+        Uses the largest axis so squish/stretch during animation doesn't
+        accidentally shrink the detection window.
+        """
+        raw = max(self.body_scale.x, self.body_scale.y, self.body_scale.z)
+        return max(1.0, raw / 1.3)
+
+    def get_is_sprinting(self) -> bool:
+        """Stub — sprint mechanic not implemented yet. Always False."""
+        return False
+
+    def get_is_crouching(self) -> bool:
+        """True while the player is in CROUCH state."""
+        return self.state == PlayerState.CROUCH
+
+    def get_node_path(self) -> NodePath:
+        """Returns the player's root NodePath for scene-graph queries."""
+        return self.player_node
+
+    def is_visible(self) -> bool:
+        """False while camouflage is active — guards detect with reduced confidence."""
+        return not self.is_camouflaged
 
     # ── Loop de atualização ──────────────────────────────────────────────
     def control_task(self, task):
