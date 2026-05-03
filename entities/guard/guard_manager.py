@@ -44,8 +44,8 @@ from __future__ import annotations
 from panda3d.core import Point3, NodePath
 from direct.showbase.ShowBase import ShowBase
 
-from src.guard.guard import Guard
-from src.guard.alert_state import AlertState
+from entities.guard.guard import Guard
+from entities.guard.alert_state import AlertState
 
 # ── constants ─────────────────────────────────────────────────────────────────
 HUNTING_THRESHOLD:    int   = 3      # simultaneous hunters needed for GENERAL_ALARM

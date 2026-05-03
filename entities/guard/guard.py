@@ -55,9 +55,9 @@ from panda3d.core import (
 )
 from direct.showbase.ShowBase import ShowBase
 
-from src.guard.waypoint import Waypoint
-from src.guard.fov_component import FOVComponent, CURIOUS_THRESHOLD, SUSPICIOUS_THRESHOLD
-from src.guard.alert_state import AlertState
+from entities.guard.waypoint import Waypoint
+from entities.guard.fov_component import FOVComponent, CURIOUS_THRESHOLD, SUSPICIOUS_THRESHOLD
+from entities.guard.alert_state import AlertState
 
 # ── patrol constants (unchanged) ──────────────────────────────────────────────
 MOVE_SPEED:       float = 4.0
