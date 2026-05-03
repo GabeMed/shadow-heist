@@ -53,7 +53,8 @@ class Player:
     SQUISH_SPEED      = 9.0   # unidades/seg de transição de escala
 
     # ── Estados ───────────────────────────────────────────────────────────
-    CROUCH_SPEED_MULT = 0.45  # fator de velocidade ao agachar
+    CROUCH_SPEED_MULT      = 0.45  # fator de velocidade ao agachar
+    CROUCH_TRANSITION_TIME = 0.08  # segundos exibindo o modelo de transição
 
     # ── Camuflagem ────────────────────────────────────────────────────────
     CAMO_ALPHA        = 0.22  # opacidade do modelo ao camuflado
@@ -86,9 +87,10 @@ class Player:
 
         self.body_scale      = Vec3(1.3, 1.3, 1.3)
         self.cam_dist_current = self.CAM_DIST_MAX
-        self.cam_pitch        = self.CAM_PITCH_DEFAULT  # ângulo controlado pelo mouse Y
-        self.cam_pitch_adj    = 0.0                     # delta suave para crouch
-        self.state            = PlayerState.IDLE
+        self.cam_pitch             = self.CAM_PITCH_DEFAULT
+        self.cam_pitch_adj         = 0.0
+        self.state                 = PlayerState.IDLE
+        self.crouch_transition_timer = 0.0  # > 0 enquanto exibe modelo de transição
         self.is_camouflaged      = False
         self.camo_active_timer   = 0.0  # tempo restante de camuflagem ativa
         self.camo_cooldown_timer = 0.0  # tempo restante de cooldown
@@ -182,8 +184,10 @@ class Player:
                 wrap.setShaderInput(k, v)
             return wrap
 
-        self.model_normal = _load_centered("assets/player-normal.egg", "model_normal")
-        self.model_crunch  = _load_centered("assets/player-crunch.egg", "model_crunch")
+        self.model_normal    = _load_centered("assets/player-normal.egg",    "model_normal")
+        self.model_crunch_t1 = _load_centered("assets/player-crunch-t1.egg", "model_crunch_t1")
+        self.model_crunch    = _load_centered("assets/player-crunch.egg",    "model_crunch")
+        self.model_crunch_t1.hide()
         self.model_crunch.hide()
 
         self.model = self.model_normal
@@ -198,7 +202,12 @@ class Player:
 
     def _update_active_model(self):
         """Swap the visible model wrapper when the state changes; transfer camo."""
-        target = self.model_crunch if self.state == PlayerState.CROUCH else self.model_normal
+        if self.crouch_transition_timer > 0:
+            target = self.model_crunch_t1
+        elif self.state == PlayerState.CROUCH:
+            target = self.model_crunch
+        else:
+            target = self.model_normal
         if target is self.model:
             return
         old = self.model
@@ -255,7 +264,7 @@ class Player:
         ld = Vec3(0.5, -0.5, 1.0).normalized()
         lv = self.base.render.getRelativeVector(self.base.camera, ld)
         ft = self.base.clock.getFrameTime()
-        for m in (self.model_normal, self.model_crunch):
+        for m in (self.model_normal, self.model_crunch_t1, self.model_crunch):
             m.setShaderInput("light_dir_view", lv)
             m.setShaderInput("time", ft)
 
@@ -293,6 +302,14 @@ class Player:
             new_state = PlayerState.WALK
         else:
             new_state = PlayerState.IDLE
+
+        # Detecta mudança entre agachado e em pé — inicia janela de transição
+        was_crouch = (self.state == PlayerState.CROUCH)
+        now_crouch = (new_state == PlayerState.CROUCH)
+        if was_crouch != now_crouch:
+            self.crouch_transition_timer = self.CROUCH_TRANSITION_TIME
+        elif self.crouch_transition_timer > 0:
+            self.crouch_transition_timer = max(0.0, self.crouch_transition_timer - dt)
 
         self.state = new_state
         self._update_active_model()
