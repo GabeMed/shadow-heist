@@ -24,7 +24,7 @@ python main.py
 ## Running the guard AI test scene (standalone, no game needed)
 
 ```bash
-python main_ai_test.py
+python main_test.py
 ```
 
 ---
