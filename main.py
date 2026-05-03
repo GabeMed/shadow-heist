@@ -12,6 +12,9 @@ loadPrcFileData("", "mouse-mode absolute")
 # Tenta impedir que o sistema operacional redimensione as coordenadas (Problema de DPI)
 loadPrcFileData("", "win-unfocused-input 1")
 
+loadPrcFileData("", "want-directtools 0")
+loadPrcFileData("", "want-tk 0")
+
 
 class ShadowHeist(ShowBase):
     def __init__(self):

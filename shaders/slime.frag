@@ -9,6 +9,7 @@ uniform vec4  p3d_ColorScale;  // usado pela camuflagem (setColorScale)
 
 in vec3 v_normal;
 in vec3 v_pos;
+in vec4 v_color;
 
 out vec4 p3d_FragColor;
 
@@ -27,7 +28,7 @@ void main() {
     // Rim light / Fresnel: bordas perpendiculares à câmera ficam brilhantes
     float rim = pow(1.0 - max(dot(N, V), 0.0), rim_power);
 
-    vec3 base  = vec3(0.05, 0.05, 0.07);
+    vec3 base  = v_color.rgb;
     vec3 color = base * (ambient_color.rgb + diff * light_color.rgb)
                + spec * 0.35 * vec3(0.30, 0.35, 0.50)
                + rim  * rim_color.rgb;

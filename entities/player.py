@@ -30,10 +30,14 @@ class Player:
     """
 
     # ── Câmera ────────────────────────────────────────────────────────────
-    CAM_DIST_MAX     = 20.0   # distância máxima antes de puxar a câmera
-    CAM_DIST_MIN     = 5.0    # distância mínima antes de empurrar a câmera
-    CAM_HEIGHT       = 3.0    # altura da câmera relativa ao player
-    FLOATER_Z_OFFSET = 2.0    # alvo da câmera (acima da cabeça do player)
+    CAM_DIST_MAX       = 20.0  # distância máxima antes de puxar a câmera
+    CAM_DIST_MIN       = 5.0   # distância mínima antes de empurrar a câmera
+    FLOATER_Z_OFFSET   = 2.0   # alvo da câmera (acima da cabeça do player)
+    CAM_PITCH_DEFAULT  = 20.0  # ângulo de elevação padrão (graus acima do horizonte)
+    CAM_PITCH_MIN      = 5.0   # limite inferior (quase rente ao chão)
+    CAM_PITCH_MAX      = 75.0  # limite superior (quase sobre a cabeça)
+    CAM_PITCH_CROUCH   = -8.0  # delta de pitch ao agachar
+    CAM_PITCH_SPEED    = 60.0  # graus/seg de transição suave do pitch do crouch
 
     # ── Movimento ────────────────────────────────────────────────────────
     TURN_SPEED       = 200.0  # graus/seg ao virar (A/D)
@@ -50,8 +54,6 @@ class Player:
 
     # ── Estados ───────────────────────────────────────────────────────────
     CROUCH_SPEED_MULT = 0.45  # fator de velocidade ao agachar
-    CAM_CROUCH_HEIGHT = 1.2   # altura da câmera ao agachar
-    CAM_HEIGHT_SPEED  = 6.0   # unidades/seg de transição de altura da câmera
 
     # ── Camuflagem ────────────────────────────────────────────────────────
     CAMO_ALPHA        = 0.22  # opacidade do modelo ao camuflado
@@ -71,20 +73,22 @@ class Player:
         self.floater = self.base.render.attachNewNode("floater")
 
         # ── Câmera começa atrás do personagem ───────────────────────────
+        _init_pitch = math.radians(self.CAM_PITCH_DEFAULT)
         self.base.camera.setPos(
             self.player_node.getX(),
-            self.player_node.getY() - self.CAM_DIST_MAX,
-            self.player_node.getZ() + self.CAM_HEIGHT,
+            self.player_node.getY() - self.CAM_DIST_MAX * math.cos(_init_pitch),
+            self.player_node.getZ() + self.CAM_DIST_MAX * math.sin(_init_pitch),
         )
         self.base.camera.lookAt(self.player_node)
 
         self.setup_collision()
         self.setup_cam_collision()
 
-        self.body_scale         = Vec3(1.3, 1.3, 1.3)
-        self.cam_dist_current   = self.CAM_DIST_MAX
-        self.cam_height_current = float(self.CAM_HEIGHT)
-        self.state              = PlayerState.IDLE
+        self.body_scale      = Vec3(1.3, 1.3, 1.3)
+        self.cam_dist_current = self.CAM_DIST_MAX
+        self.cam_pitch        = self.CAM_PITCH_DEFAULT  # ângulo controlado pelo mouse Y
+        self.cam_pitch_adj    = 0.0                     # delta suave para crouch
+        self.state            = PlayerState.IDLE
         self.is_camouflaged      = False
         self.camo_active_timer   = 0.0  # tempo restante de camuflagem ativa
         self.camo_cooldown_timer = 0.0  # tempo restante de cooldown
@@ -142,29 +146,49 @@ class Player:
         self.cam_trav.addCollider(self.cam_seg_np, self.cam_queue)
 
     def _build_slime(self):
-        """Constrói o corpo + olhos da Criatura Ladrão."""
-        # ── Corpo ──────────────────────────────────────────────────────
-        self.model = self.base.loader.loadModel("assets/slime.egg")
-        self.model.reparentTo(self.player_node)
-        self.model.setScale(1.3, 1.3, 1.3)
-        self.model.setP(90)  # corrige modelo de Y-up (deitado → em pé)
-        self.model.setH(180)
-
+        """Load both character models and apply the GLSL shader to each."""
         shader = Shader.load(
             Shader.SL_GLSL,
             vertex="shaders/slime.vert",
             fragment="shaders/slime.frag",
         )
-        self.model.setShader(shader)
-        self.model.setShaderInput("light_color",   Vec4(0.7, 0.7,  0.7,  1))
-        self.model.setShaderInput("ambient_color",  Vec4(0.3, 0.3,  0.3,  1))
-        self.model.setShaderInput("rim_color",      Vec4(0.15, 0.45, 1.0, 1))
-        self.model.setShaderInput("rim_power",      3.5)
-        self.model.setShaderInput("time",           0.0)
-        # light_dir_view é atualizado por frame em control_task
-        self.model.setShaderInput("light_dir_view", Vec3(0, 0, 1))
+        shader_inputs = {
+            "light_color":    Vec4(0.7, 0.7, 0.7, 1),
+            "ambient_color":  Vec4(0.3, 0.3, 0.3, 1),
+            "rim_color":      Vec4(0.15, 0.45, 1.0, 1),
+            "rim_power":      3.5,
+            "time":           0.0,
+            "light_dir_view": Vec3(0, 0, 1),
+        }
 
-        # PointLight na altura dos olhos do modelo — ilumina o ambiente próximo
+        def _load_centered(path, name):
+            # Wrapper node — setScale() on this scales around the geometry centre
+            wrap = self.player_node.attachNewNode(name)
+            m = self.base.loader.loadModel(path)
+            m.reparentTo(wrap)
+            # The OBJ is exported with Y-up: height is along egg-Y.
+            # P=90 maps egg-Y → Panda3D-Z (up), H=180 faces the model forward.
+            m.setP(90)
+            m.setH(180)
+            # Bounds are now in player_node space (after rotation).
+            mn, mx = m.getTightBounds()
+            cx = (mn.x + mx.x) * 0.5
+            cy = (mn.y + mx.y) * 0.5
+            # Place the model bottom at local Z = -sphere_radius so the feet
+            # land at world Z = 0 (player_node sits at the sphere centre, ~1.1 up).
+            m.setPos(-cx, -cy, -mn.z - 0.75)
+            wrap.setShader(shader)
+            for k, v in shader_inputs.items():
+                wrap.setShaderInput(k, v)
+            return wrap
+
+        self.model_normal = _load_centered("assets/player-normal.egg", "model_normal")
+        self.model_crunch  = _load_centered("assets/player-crunch.egg", "model_crunch")
+        self.model_crunch.hide()
+
+        self.model = self.model_normal
+
+        # PointLight at eye level
         eye_light = PointLight("eye_light")
         eye_light.setColor((0.9, 0.70, 0.10, 1))
         eye_light.setAttenuation((1, 0, 0.05))
@@ -172,12 +196,28 @@ class Player:
         self.eye_light_np.setPos(0, 0.8, 0.5)
         self.base.render.setLight(self.eye_light_np)
 
+    def _update_active_model(self):
+        """Swap the visible model wrapper when the state changes; transfer camo."""
+        target = self.model_crunch if self.state == PlayerState.CROUCH else self.model_normal
+        if target is self.model:
+            return
+        old = self.model
+        old.hide()
+        target.show()
+        self.model = target
+        if self.is_camouflaged:
+            old.clearColorScale()
+            old.clearTransparency()
+            self.model.setTransparency(TransparencyAttrib.M_alpha)
+            self.model.setColorScale(0.4, 0.9, 1.0, self.CAMO_ALPHA)
+        self.model.setScale(self.body_scale)
+
     def _apply_squish(self, dt):
         """Lerp linear da escala do corpo com base no estado atual."""
         targets = {
             PlayerState.IDLE:   Vec3(1.30, 1.30, 1.30),
-            PlayerState.WALK:   Vec3(1.15, 1.10, 1.55),
-            PlayerState.CROUCH: Vec3(1.60, 0.95, 1.60),
+            PlayerState.WALK:   Vec3(1.35, 1.35, 1.25),
+            PlayerState.CROUCH: Vec3(1.30, 1.30, 1.30),  # crunch model is already the crouched pose
         }
         target = targets[self.state]
         step = self.SQUISH_SPEED * dt
@@ -191,10 +231,11 @@ class Player:
 
     def attach_camera(self, camera):
         """Reposiciona a câmera atrás do personagem (saída do free-cam)."""
+        pitch_rad = math.radians(self.cam_pitch)
         camera.setPos(
             self.player_node.getX(),
-            self.player_node.getY() - self.CAM_DIST_MAX,
-            self.player_node.getZ() + self.CAM_HEIGHT,
+            self.player_node.getY() - self.CAM_DIST_MAX * math.cos(pitch_rad),
+            self.player_node.getZ() + self.CAM_DIST_MAX * math.sin(pitch_rad),
         )
         camera.lookAt(self.player_node)
 
@@ -212,9 +253,11 @@ class Player:
 
         # Atualiza inputs do shader: wobble time + direção da luz em view space
         ld = Vec3(0.5, -0.5, 1.0).normalized()
-        self.model.setShaderInput("light_dir_view",
-            self.base.render.getRelativeVector(self.base.camera, ld))
-        self.model.setShaderInput("time", self.base.clock.getFrameTime())
+        lv = self.base.render.getRelativeVector(self.base.camera, ld)
+        ft = self.base.clock.getFrameTime()
+        for m in (self.model_normal, self.model_crunch):
+            m.setShaderInput("light_dir_view", lv)
+            m.setShaderInput("time", ft)
 
         speed = self.WALK_SPEED * (
             self.CROUCH_SPEED_MULT if self.state == PlayerState.CROUCH else 1.0
@@ -252,15 +295,16 @@ class Player:
             new_state = PlayerState.IDLE
 
         self.state = new_state
+        self._update_active_model()
 
-        # Transição linear da altura da câmera
-        target_h = self.CAM_CROUCH_HEIGHT if is_crouching else self.CAM_HEIGHT
-        diff = target_h - self.cam_height_current
-        step = self.CAM_HEIGHT_SPEED * dt
+        # Ajuste suave do pitch ao agachar (lerp independente do controle manual)
+        target_adj = self.CAM_PITCH_CROUCH if is_crouching else 0.0
+        diff = target_adj - self.cam_pitch_adj
+        step = self.CAM_PITCH_SPEED * dt
         if abs(diff) <= step:
-            self.cam_height_current = target_h
+            self.cam_pitch_adj = target_adj
         else:
-            self.cam_height_current += math.copysign(step, diff)
+            self.cam_pitch_adj += math.copysign(step, diff)
 
         self._apply_squish(dt)
 
@@ -315,6 +359,12 @@ class Player:
                 # Ignoramos esse frame para não dar um giro de 360 graus louco.
                 if abs(dx) < win.getXSize() / 2:
                     self._orbit_camera(-dx * self.MOUSE_SENS)
+                self._pitch_camera(dy * self.MOUSE_SENS)
+
+    def _pitch_camera(self, delta_deg):
+        """Ajusta o ângulo de elevação da câmera, com clamp."""
+        self.cam_pitch = max(self.CAM_PITCH_MIN,
+                             min(self.CAM_PITCH_MAX, self.cam_pitch + delta_deg))
 
     def _orbit_camera(self, angle_deg):
         """Rotaciona a posição da câmera ao redor do eixo Z do player."""
@@ -378,11 +428,18 @@ class Player:
         nx = dx / dist_xy
         ny = dy / dist_xy
 
-        # Posição ideal (sem obstáculos) na distância máxima
+        # Pitch total: controle do mouse + ajuste suave do crouch
+        total_pitch = max(self.CAM_PITCH_MIN,
+                          min(self.CAM_PITCH_MAX, self.cam_pitch + self.cam_pitch_adj))
+        pitch_rad = math.radians(total_pitch)
+        cos_p = math.cos(pitch_rad)
+        sin_p = math.sin(pitch_rad)
+
+        # Posição ideal (sem obstáculos) em coordenadas esféricas
         ideal_pos = Point3(
-            player_pos.x + nx * self.CAM_DIST_MAX,
-            player_pos.y + ny * self.CAM_DIST_MAX,
-            player_pos.z + self.cam_height_current,
+            player_pos.x + nx * self.CAM_DIST_MAX * cos_p,
+            player_pos.y + ny * self.CAM_DIST_MAX * cos_p,
+            player_pos.z + self.CAM_DIST_MAX * sin_p,
         )
 
         safe_dist = self._query_cam_dist(ideal_pos)
@@ -399,9 +456,9 @@ class Player:
 
         # Aplica posição final da câmera
         self.base.camera.setPos(
-            player_pos.x + nx * self.cam_dist_current,
-            player_pos.y + ny * self.cam_dist_current,
-            player_pos.z + self.cam_height_current,
+            player_pos.x + nx * self.cam_dist_current * cos_p,
+            player_pos.y + ny * self.cam_dist_current * cos_p,
+            player_pos.z + self.cam_dist_current * sin_p,
         )
 
         # Floater: ponto de foco acima da cabeça
