@@ -1,6 +1,6 @@
 # src/guard/fov_component.py
 """
-FOVComponent — Phase 2
+FOVComponent
 -----------------------
 Raycast-based vision cone for a single Guard.
 
