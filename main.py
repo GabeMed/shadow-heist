@@ -15,6 +15,8 @@ loadPrcFileData("", "win-unfocused-input 1")
 
 loadPrcFileData("", "want-directtools 0")
 loadPrcFileData("", "want-tk 0")
+# Force OpenGL 3.2 Core profile so GLSL 330 shaders compile (macOS caps at 4.1 Core).
+loadPrcFileData("", "gl-version 3 2")
 
 
 class ShadowHeist(ShowBase):

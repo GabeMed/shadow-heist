@@ -1,4 +1,4 @@
-#version 130
+#version 330 core
 
 uniform mat4 p3d_ModelViewProjectionMatrix;
 uniform mat4 p3d_ModelViewMatrix;

@@ -1,4 +1,4 @@
-#version 130
+#version 330 core
 
 uniform vec3  light_dir_view;  // direção PARA a luz, em view space
 uniform vec4  light_color;
