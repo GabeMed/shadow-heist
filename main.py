@@ -1,7 +1,7 @@
 from direct.showbase.ShowBase import ShowBase
 from direct.gui.DirectGui import DirectButton, DirectFrame
 from direct.gui.OnscreenText import OnscreenText
-from panda3d.core import WindowProperties, CollisionTraverser, CollisionHandlerPusher
+from panda3d.core import WindowProperties, CollisionTraverser, CollisionHandlerPusher, TextNode
 from panda3d.core import loadPrcFileData
 
 from core.level_manager import LevelManager
@@ -40,12 +40,14 @@ class ShadowHeist(ShowBase):
         self.level_manager = LevelManager(self)
         self.player        = Player(self)
         self.item_manager  = ItemManager(self)
+        self._build_debug_overlay()
 
         self._build_menu()
         self._show_menu()
 
         self.accept("escape", self.toggle_pause)
         self.accept("c",      self.toggle_free_cam)
+        self.taskMgr.add(self._update_debug_overlay, "debug_overlay_task")
 
     # ------------------------------------------------------------------
     # Mouse lock
@@ -115,6 +117,34 @@ class ShadowHeist(ShowBase):
         )
 
         self.menu_root.hide()
+
+    def _build_debug_overlay(self):
+        self._debug_pos_text = OnscreenText(
+            text="X: 0.00  Y: 0.00  Z: 0.00\nBeholder: --",
+            pos=(-1.30, 0.93),
+            scale=0.05,
+            align=TextNode.ALeft,
+            fg=(1, 1, 1, 0.92),
+            shadow=(0, 0, 0, 1),
+            mayChange=True,
+            parent=self.aspect2d,
+        )
+
+    def _update_debug_overlay(self, task):
+        beholder_text = "Beholder: --"
+        if hasattr(self, "level_manager") and hasattr(self.level_manager, "house"):
+            beholder_pos = self.level_manager.house.get_beholder_position()
+            if beholder_pos is not None:
+                beholder_text = (
+                    f"Beholder: X: {beholder_pos.x:7.2f}  "
+                    f"Y: {beholder_pos.y:7.2f}  Z: {beholder_pos.z:6.2f}"
+                )
+        if hasattr(self, "player") and hasattr(self.player, "player_node"):
+            pos = self.player.player_node.getPos()
+            self._debug_pos_text.setText(
+                f"X: {pos.x:7.2f}  Y: {pos.y:7.2f}  Z: {pos.z:6.2f}\n{beholder_text}"
+            )
+        return task.cont
 
     def _show_menu(self):
         self.game_paused = True
