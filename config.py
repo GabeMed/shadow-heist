@@ -52,6 +52,30 @@ MAX_GROWTH_SCALE       = 2.0    # escala máxima atingível
 # speed_efetiva = WALK_SPEED / growth_scale ^ SPEED_SCALE_EXPONENT
 SPEED_SCALE_EXPONENT   = 0.6
 
+# ── Beholders (inimigos) ────────────────────────────────────────────────
+BEHOLDER_COUNT                  = 4
+BEHOLDER_HOVER_Z                = 2.4
+BEHOLDER_BOB_FREQ               = 1.6     # rad/s
+BEHOLDER_BOB_AMPL               = 0.18
+BEHOLDER_PATROL_SPEED           = 3.5
+BEHOLDER_CHASE_SPEED            = 7.0
+BEHOLDER_TURN_SPEED             = 220.0   # deg/s
+BEHOLDER_SCAN_FREQ              = 0.9     # rad/s
+BEHOLDER_SCAN_AMPL_RAD          = 0.6
+BEHOLDER_SIGHT_RANGE            = 14.0
+BEHOLDER_SIGHT_FOV_DEG          = 95.0
+BEHOLDER_CAMO_RANGE_MULT        = 0.35    # range when player is camouflaged
+BEHOLDER_CAMO_DETECT_MULT       = 0.45    # detection-fill rate when camo
+BEHOLDER_DETECT_GAIN            = 1.6     # per second while seen
+BEHOLDER_DETECT_DECAY           = 0.5     # per second while unseen
+BEHOLDER_SUSPICIOUS_THRESHOLD   = 0.35
+BEHOLDER_SEARCH_TIME            = 5.0     # how long to chase last-seen pos
+BEHOLDER_CATCH_RADIUS           = 1.8
+
+# ── Heist (objetivo) ────────────────────────────────────────────────────
+HEIST_EXIT_POS                  = (0.0, -56.0)   # south of castle, near spawn area
+HEIST_EXIT_RADIUS               = 4.0
+
 # ── Highlight dos itens ──────────────────────────────────────────────────
 HIGHLIGHT_PULSE_SPEED  = 2.5    # Hz do pulso de alpha
 HIGHLIGHT_ALPHA_MIN    = 0.15
