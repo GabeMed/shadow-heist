@@ -82,6 +82,23 @@ BEHOLDER_CATCH_RADIUS           = 1.8
 HEIST_EXIT_POS                  = (0.0, -56.0)   # south of castle, near spawn area
 HEIST_EXIT_RADIUS               = 4.0
 
+# ── Story / relic shards ────────────────────────────────────────────────
+SHARD_COUNT                     = 3
+SHARD_PICKUP_RADIUS             = 2.2
+SHARD_NAMES = [
+    "Shard of Echoes",
+    "Shard of Veils",
+    "Shard of Embers",
+]
+SHARD_COLORS = [
+    (0.30, 0.70, 1.00, 1.0),
+    (0.65, 0.30, 1.00, 1.0),
+    (1.00, 0.40, 0.20, 1.0),
+]
+SHARD_BOB_AMPLITUDE             = 0.25
+SHARD_BOB_SPEED                 = 1.4
+SHARD_SPIN_SPEED                = 60.0  # deg / sec
+
 # ── Highlight dos itens ──────────────────────────────────────────────────
 HIGHLIGHT_PULSE_SPEED  = 2.5    # Hz do pulso de alpha
 HIGHLIGHT_ALPHA_MIN    = 0.15

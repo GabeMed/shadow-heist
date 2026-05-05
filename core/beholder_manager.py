@@ -113,6 +113,17 @@ class BeholderManager:
     def any_suspicious(self) -> bool:
         return any(b.state == BeholderState.SUSPICIOUS for b in self.beholders)
 
+    def alert_all(self, pos):
+        """Force every beholder into ALERT toward `pos` (e.g. shard pickup)."""
+        if pos is None:
+            return
+        target = Point3(pos.x, pos.y, 0.0)
+        for b in self.beholders:
+            b.detection = 1.0
+            b.state = BeholderState.ALERT
+            b.last_seen_pos = target
+            b.search_timer = Cfg.BEHOLDER_SEARCH_TIME
+
     def closest_pos(self, ref_pos):
         if not self.beholders:
             return None

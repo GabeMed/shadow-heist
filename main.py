@@ -9,6 +9,7 @@ from entities.player import Player
 from entities.item_manager import ItemManager
 from core.beholder_manager import BeholderManager
 from core.game_state import GameState
+from core.shard_manager import ShardManager
 from core.minimap import Minimap
 from core.torch_fire import TorchFireManager
 
@@ -48,6 +49,7 @@ class ShadowHeist(ShowBase):
         self.item_manager      = ItemManager(self)
         self.beholder_manager  = BeholderManager(self, on_caught=self._on_caught)
         self.torch_fires       = TorchFireManager(self, tip_offset=(0.0, 0.0, 1.0))
+        self.shard_manager     = ShardManager(self)
         self.game_state        = GameState(self)
         self.minimap           = Minimap(self)
         self._build_debug_overlay()
