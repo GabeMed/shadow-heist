@@ -7,6 +7,10 @@ from panda3d.core import loadPrcFileData
 from core.level_manager import LevelManager
 from entities.player import Player
 from entities.item_manager import ItemManager
+from core.beholder_manager import BeholderManager
+from core.game_state import GameState
+from core.minimap import Minimap
+from core.torch_fire import TorchFireManager
 
 # Força o mouse a ficar preso dentro da janela (Modo Grab)
 loadPrcFileData("", "mouse-mode absolute") 
@@ -39,9 +43,13 @@ class ShadowHeist(ShowBase):
         self.game_started   = False
         self.free_cam_active = False
 
-        self.level_manager = LevelManager(self)
-        self.player        = Player(self)
-        self.item_manager  = ItemManager(self)
+        self.level_manager     = LevelManager(self)
+        self.player            = Player(self)
+        self.item_manager      = ItemManager(self)
+        self.beholder_manager  = BeholderManager(self, on_caught=self._on_caught)
+        self.torch_fires       = TorchFireManager(self, tip_offset=(0.0, 0.0, 1.0))
+        self.game_state        = GameState(self)
+        self.minimap           = Minimap(self)
         self._build_debug_overlay()
 
         self._build_menu()
@@ -159,6 +167,10 @@ class ShadowHeist(ShowBase):
         self.game_paused  = False
         self.menu_root.hide()
         self.lock_mouse()
+
+    def _on_caught(self):
+        if hasattr(self, "game_state"):
+            self.game_state.caught_by_beholder()
 
     def toggle_pause(self):
         if self.free_cam_active:
