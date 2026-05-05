@@ -7,6 +7,7 @@ from panda3d.core import (
 
 import config as Cfg
 from core.house_builder import HouseBuilder
+from core.shadow_pass import ShadowPass
 
 
 # Hard-coded cap matches MAX_POINT_LIGHTS in shaders/scene.frag.
@@ -25,6 +26,13 @@ class LevelManager:
         self.setup_lights()
         self.setup_environment()
         self.setup_scene_shader()
+        self.shadow_pass = ShadowPass(
+            base,
+            self._dir_light_np,
+            scene_center=(0.0, 10.0, 0.0),
+            film_size=170.0,
+            far_distance=120.0,
+        )
 
     # ------------------------------------------------------------------
     # Lights
@@ -104,6 +112,10 @@ class LevelManager:
         self.base.render.setShaderInput("point_pos",   self._scene_pt_pos)
         self.base.render.setShaderInput("point_color", self._scene_pt_color)
         self.base.render.setShaderInput("point_atten", self._scene_pt_atten)
+
+        # Default shadow_vp — replaced by ShadowPass once it initializes.
+        from panda3d.core import LMatrix4
+        self.base.render.setShaderInput("shadow_vp", LMatrix4.identMat())
 
         self.base.taskMgr.add(self._scene_lighting_task, "scene_lighting")
 

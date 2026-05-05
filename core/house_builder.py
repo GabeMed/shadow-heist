@@ -186,7 +186,7 @@ class HouseBuilder:
         self._create_internal_walls()
         self._create_central_hall_columns()
         self._create_side_towers()
-        self._create_beholder()
+        # Static beholder prop replaced by BeholderManager AI enemies.
         self._create_external_torches()
         self._set_player_spawn()
         return self.root
