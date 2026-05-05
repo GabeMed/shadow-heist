@@ -188,8 +188,65 @@ class HouseBuilder:
         self._create_side_towers()
         # Static beholder prop replaced by BeholderManager AI enemies.
         self._create_external_torches()
+        self._create_castle_battlements()
         self._set_player_spawn()
         return self.root
+
+    # ------------------------------------------------------------------
+    # Castle battlements — crenellated parapet on outer perimeter.
+    # ------------------------------------------------------------------
+    def _create_castle_battlements(self):
+        merlon_h = 1.1
+        merlon_w = 0.9
+        merlon_gap = 0.9
+        depth = self.wall_thickness
+        base_z = self.wall_height
+
+        # (axis, fixed, start, end). Mirror the outer-shell wall layout.
+        segments = [
+            ("x", self._s(-20), self._s(-26), self._s(26)),    # south_main
+            ("x", self._s(32),  self._s(-18), self._s(18)),    # north_main
+            ("y", self._s(-26), self._s(-20), self._s(32)),    # west_main
+            ("y", self._s(26),  self._s(-20), self._s(32)),    # east_main
+            ("x", self._s(24),  self._s(-26), self._s(-18)),   # north_low_west
+            ("x", self._s(24),  self._s(18),  self._s(26)),    # north_low_east
+        ]
+        # Tower outer walls (west cluster x=-30, east cluster x=+30).
+        for cx, cy in [(-30.0, -14.0), (-30.0, 6.0), (-30.0, 28.0)]:
+            segments.append(("y", self._s(cx - 4.0), self._s(cy - 4.0), self._s(cy + 4.0)))
+        for cx, cy in [(30.0, -14.0), (30.0, 6.0), (30.0, 28.0)]:
+            segments.append(("y", self._s(cx + 4.0), self._s(cy - 4.0), self._s(cy + 4.0)))
+
+        for axis, fixed, start, end in segments:
+            self._create_merlon_run(axis, fixed, start, end, base_z,
+                                    merlon_w, merlon_gap, merlon_h, depth)
+
+    def _create_merlon_run(self, axis, fixed, start, end, base_z,
+                           merlon_w, gap, merlon_h, depth):
+        span = end - start
+        period = merlon_w + gap
+        if span < merlon_w or period <= 0:
+            return
+        count = max(1, int(span // period))
+        # Center the merlon pattern within the run.
+        used = count * merlon_w + (count - 1) * gap
+        offset = (span - used) * 0.5
+        for i in range(count):
+            local = offset + i * period + merlon_w * 0.5
+            center_along = start + local
+            if axis == "x":
+                box_center = (center_along, fixed, base_z + merlon_h * 0.5)
+                box_size = (merlon_w, depth, merlon_h)
+            else:
+                box_center = (fixed, center_along, base_z + merlon_h * 0.5)
+                box_size = (depth, merlon_w, merlon_h)
+            self._create_box(
+                name=f"merlon_{axis}_{int(fixed*10)}_{i}",
+                center=box_center,
+                size=box_size,
+                color=self.tower_color,
+                collide=False,
+            )
 
     # ------------------------------------------------------------------
     # Public helpers

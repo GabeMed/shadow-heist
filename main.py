@@ -69,8 +69,10 @@ class ShadowHeist(ShowBase):
         
         props = WindowProperties()
         props.setCursorHidden(True)
-        # M_confined "tranca" o mouse dentro do retângulo da janela
-        props.setMouseMode(WindowProperties.M_relative)
+        # M_confined keeps the cursor pinned inside the window while still
+        # reporting absolute coords — manual recenter then yields a clean
+        # delta cross-platform (M_relative behaves inconsistently on macOS).
+        props.setMouseMode(WindowProperties.M_confined)
         self.win.requestProperties(props)
         
         # 2. Centraliza imediatamente

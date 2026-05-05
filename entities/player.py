@@ -64,6 +64,10 @@ class Player:
         self.cam_dist_current        = Cfg.CAM_DIST_MAX
         self.cam_pitch               = Cfg.CAM_PITCH_DEFAULT
         self.cam_pitch_adj           = 0.0
+        # Yaw stored explicitly (degrees, world-space). 0 = camera south of
+        # player looking north. Decoupling from camera position prevents
+        # dolly-shrink from shrinking orbit radius mid-rotation.
+        self.cam_yaw                 = 0.0
         self.state                   = PlayerState.IDLE
         self.crouch_transition_timer = 0.0
         self.vel_z                   = 0.0
@@ -381,6 +385,20 @@ class Player:
             self.player_node.setY(self.player_node, step)
             self.base.cTrav.traverse(self.base.render)
 
+    def _move_world_xy(self, dx, dy):
+        """Translate the player along world X/Y with collision substeps."""
+        if abs(dx) < 1e-6 and abs(dy) < 1e-6:
+            return
+        max_step = 0.35
+        dist = math.hypot(dx, dy)
+        steps = max(1, int(math.ceil(dist / max_step)))
+        sx = dx / steps
+        sy = dy / steps
+        for _ in range(steps):
+            p = self.player_node.getPos()
+            self.player_node.setPos(p.x + sx, p.y + sy, p.z)
+            self.base.cTrav.traverse(self.base.render)
+
     def _sync_environment_interactions(self):
         if hasattr(self.base, "level_manager"):
             self.base.level_manager.set_player_airborne(not self.is_grounded)
@@ -412,17 +430,31 @@ class Player:
             Cfg.CROUCH_SPEED_MULT if self.state == PlayerState.CROUCH else 1.0
         )
 
-        # ── Rotação (A/D giram em torno de Z) ─────────────────────────
-        if self.key_map["left"]:
-            self.player_node.setH(self.player_node.getH() + Cfg.TURN_SPEED * dt)
-        if self.key_map["right"]:
-            self.player_node.setH(self.player_node.getH() - Cfg.TURN_SPEED * dt)
+        # ── Camera-relative WASD: input axes mapped onto camera yaw. ──
+        ix = (1.0 if self.key_map["right"] else 0.0) - (1.0 if self.key_map["left"] else 0.0)
+        iy = (1.0 if self.key_map["forward"] else 0.0) - (1.0 if self.key_map["backward"] else 0.0)
+        mag = math.hypot(ix, iy)
+        if mag > 1e-4:
+            ix /= mag
+            iy /= mag
+            yaw_rad = math.radians(self.cam_yaw)
+            cos_y = math.cos(yaw_rad)
+            sin_y = math.sin(yaw_rad)
+            # Camera-forward = -n (toward pivot) = (sin, cos) in world XY.
+            # Camera-right = perpendicular CW from forward = (cos, -sin).
+            fwd_x,   fwd_y   =  sin_y,  cos_y
+            right_x, right_y =  cos_y, -sin_y
+            move_x = ix * right_x + iy * fwd_x
+            move_y = ix * right_y + iy * fwd_y
+            self._move_world_xy(move_x * speed * dt, move_y * speed * dt)
 
-        # ── Movimento (W/S deslocam no eixo Y local do personagem) ─────
-        if self.key_map["forward"]:
-            self._move_local_y(speed * dt)
-        if self.key_map["backward"]:
-            self._move_local_y(-speed * dt)
+            # Player smoothly rotates to face movement direction.
+            target_h = math.degrees(math.atan2(-move_x, move_y))
+            current_h = self.player_node.getH()
+            diff = ((target_h - current_h + 540.0) % 360.0) - 180.0
+            step = max(-Cfg.PLAYER_TURN_LERP * dt,
+                       min(Cfg.PLAYER_TURN_LERP * dt, diff))
+            self.player_node.setH(current_h + step)
 
         # ── Física vertical (gravidade + pulo) ───────────────────────
         gz = self._ground_z
@@ -543,45 +575,48 @@ class Player:
     # ── Rotação manual da câmera (mouse) ─────────────────────────────────
     def _handle_mouse(self):
         win = self.base.win
-        md  = win.getPointer(0)
-        x, y = md.getX(), md.getY()
+        if not win or not win.getProperties().getForeground():
+            self._mouse_primed = False
+            return
 
         cx = win.getXSize() // 2
         cy = win.getYSize() // 2
-        dx = x - cx
-        dy = y - cy
 
-        if dx != 0 or dy != 0:
+        # First frame after pause/focus: just recenter, ignore stale delta.
+        if not getattr(self, "_mouse_primed", False):
             win.movePointer(0, cx, cy)
-            if not self.base.game_paused:
-                if abs(dx) < win.getXSize() / 2:
-                    self._orbit_camera(-dx * Cfg.MOUSE_SENS)
-                self._pitch_camera(dy * Cfg.MOUSE_SENS)
+            self._mouse_primed = True
+            return
+
+        md = win.getPointer(0)
+        dx = md.getX() - cx
+        dy = md.getY() - cy
+        if dx == 0 and dy == 0:
+            return
+
+        # Reject implausible jumps (window resize, cursor warp glitches).
+        max_jump = max(win.getXSize(), win.getYSize()) * 0.4
+        if abs(dx) > max_jump or abs(dy) > max_jump:
+            win.movePointer(0, cx, cy)
+            return
+
+        win.movePointer(0, cx, cy)
+        if self.base.game_paused:
+            return
+        self._orbit_camera(-dx * Cfg.MOUSE_SENS)
+        self._pitch_camera(dy * Cfg.MOUSE_SENS)
 
     def _pitch_camera(self, delta_deg):
         self.cam_pitch = max(Cfg.CAM_PITCH_MIN,
                              min(Cfg.CAM_PITCH_MAX, self.cam_pitch + delta_deg))
 
     def _orbit_camera(self, angle_deg):
-        rad   = math.radians(angle_deg)
-        cos_a = math.cos(rad)
-        sin_a = math.sin(rad)
+        # Pure yaw accumulation. Position recomputed in _update_camera_ralph.
+        self.cam_yaw = (self.cam_yaw + angle_deg) % 360.0
 
-        cam_pos    = self.base.camera.getPos()
-        player_pos = self.player_node.getPos()
-
-        vx = cam_pos.getX() - player_pos.getX()
-        vy = cam_pos.getY() - player_pos.getY()
-
-        new_vx = vx * cos_a - vy * sin_a
-        new_vy = vx * sin_a + vy * cos_a
-
-        self.base.camera.setX(player_pos.getX() + new_vx)
-        self.base.camera.setY(player_pos.getY() + new_vy)
-
-    def _query_cam_dist(self, ideal_cam_pos):
-        player_pos = self.player_node.getPos()
-        self.cam_seg_solid.setPointA(player_pos)
+    def _query_cam_dist(self, pivot, ideal_cam_pos):
+        """Spring-arm: ray from pivot (player head) to ideal camera pos."""
+        self.cam_seg_solid.setPointA(pivot)
         self.cam_seg_solid.setPointB(ideal_cam_pos)
 
         self.cam_queue.clearEntries()
@@ -592,22 +627,31 @@ class Player:
 
         self.cam_queue.sortEntries()
         hit_pos = self.cam_queue.getEntry(0).getSurfacePoint(self.base.render)
-        dist    = (hit_pos - player_pos).length()
+        dist    = (hit_pos - pivot).length()
         return max(Cfg.CAM_DIST_MIN, dist - 0.4)
 
     def _update_camera_ralph(self, dt):
         player_pos = self.player_node.getPos()
-        cam_pos    = self.base.camera.getPos()
 
-        dx = cam_pos.x - player_pos.x
-        dy = cam_pos.y - player_pos.y
-        dist_xy = math.sqrt(dx * dx + dy * dy)
+        # Optional yaw-follow (off by default; mouse drives yaw).
+        if Cfg.CAM_FOLLOW_FACTOR > 0.0 and any((
+            self.key_map["forward"], self.key_map["backward"],
+            self.key_map["left"],    self.key_map["right"],
+        )):
+            target_yaw = self.player_node.getH() % 360.0
+            diff = ((target_yaw - self.cam_yaw + 540.0) % 360.0) - 180.0
+            self.cam_yaw = (self.cam_yaw + diff * Cfg.CAM_FOLLOW_FACTOR * dt) % 360.0
 
-        if dist_xy < 0.001:
-            dx, dy, dist_xy = 0.0, -Cfg.CAM_DIST_MAX, Cfg.CAM_DIST_MAX
+        # Pivot at player head height — orbit center for a true 3rd-person rig.
+        pivot = Point3(
+            player_pos.x,
+            player_pos.y,
+            player_pos.z + Cfg.CAM_PIVOT_Z * self.growth_scale,
+        )
 
-        nx = dx / dist_xy
-        ny = dy / dist_xy
+        yaw_rad = math.radians(self.cam_yaw)
+        nx = -math.sin(yaw_rad)
+        ny = -math.cos(yaw_rad)
 
         total_pitch = max(Cfg.CAM_PITCH_MIN,
                           min(Cfg.CAM_PITCH_MAX, self.cam_pitch + self.cam_pitch_adj))
@@ -616,30 +660,30 @@ class Player:
         sin_p = math.sin(pitch_rad)
 
         ideal_pos = Point3(
-            player_pos.x + nx * Cfg.CAM_DIST_MAX * cos_p,
-            player_pos.y + ny * Cfg.CAM_DIST_MAX * cos_p,
-            player_pos.z + Cfg.CAM_DIST_MAX * sin_p,
+            pivot.x + nx * Cfg.CAM_DIST_MAX * cos_p,
+            pivot.y + ny * Cfg.CAM_DIST_MAX * cos_p,
+            pivot.z + Cfg.CAM_DIST_MAX * sin_p,
         )
 
-        safe_dist = self._query_cam_dist(ideal_pos)
+        safe_dist = self._query_cam_dist(pivot, ideal_pos)
 
+        # Snap inward instantly, ease outward slowly to avoid pop-in.
         if safe_dist < self.cam_dist_current:
             self.cam_dist_current = safe_dist
         else:
             self.cam_dist_current = min(
                 self.cam_dist_current + Cfg.CAM_ZOOM_SPEED * dt,
-                Cfg.CAM_DIST_MAX,
+                safe_dist,
             )
-        self.cam_dist_current = min(self.cam_dist_current, safe_dist)
 
         self.base.camera.setPos(
-            player_pos.x + nx * self.cam_dist_current * cos_p,
-            player_pos.y + ny * self.cam_dist_current * cos_p,
-            player_pos.z + self.cam_dist_current * sin_p,
+            pivot.x + nx * self.cam_dist_current * cos_p,
+            pivot.y + ny * self.cam_dist_current * cos_p,
+            pivot.z + self.cam_dist_current * sin_p,
         )
 
-        self.floater.setPos(player_pos)
-        self.floater.setZ(player_pos.z + Cfg.FLOATER_Z_OFFSET * self.growth_scale)
+        # Aim slightly forward of pivot so the player is framed lower-center.
+        self.floater.setPos(pivot)
         self.base.camera.lookAt(self.floater)
 
     # ── Interface para o sistema de guardas ───────────────────────────────

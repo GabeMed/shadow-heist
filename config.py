@@ -1,8 +1,14 @@
 # Configuração centralizada do Shadow Heist
 
 # ── Câmera ───────────────────────────────────────────────────────────────
-CAM_DIST_MAX           = 20.0
-CAM_DIST_MIN           =  5.0
+CAM_DIST_MAX           = 12.0
+CAM_DIST_MIN           =  1.8
+# Auto-follow disabled; mouse drives yaw exclusively. Set >0 to re-enable.
+CAM_FOLLOW_FACTOR      =  0.0
+# Vertical offset of the camera pivot above the player's feet (head height).
+CAM_PIVOT_Z            =  2.0
+# How fast the player rotates to face the movement direction (deg / sec).
+PLAYER_TURN_LERP       = 720.0
 FLOATER_Z_OFFSET       =  2.0
 CAM_PITCH_DEFAULT      = 20.0
 CAM_PITCH_MIN          =  5.0
