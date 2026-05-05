@@ -36,7 +36,11 @@ class Player:
 
         # ── Personagem ──────────────────────────────────────────────────
         self.player_node = self.base.render.attachNewNode("player_node")
-        self.player_node.setPos(0, 0, Cfg.GROUND_LEVEL)
+        spawn = Point3(0, 0, Cfg.GROUND_LEVEL)
+        if hasattr(self.base, "level_manager"):
+            spawn = self.base.level_manager.get_player_spawn()
+            spawn.setZ(Cfg.GROUND_LEVEL)
+        self.player_node.setPos(spawn)
 
         self._build_slime()
 
@@ -99,8 +103,10 @@ class Player:
             self.base.accept(key + "-up", self.update_key_map, [action, False])
 
         self.base.accept("e",      self.toggle_camouflage)
+        self.base.accept("f",      self.try_action)
         self.base.accept("space",  self.do_jump)
-        self.base.accept("mouse1", self.do_grab)
+        self.base.accept("mouse1", self.do_primary_action)
+        self.base.accept("mouse1-up", self.release_primary_action)
 
         self.base.taskMgr.add(self.control_task, "control_task")
 
@@ -297,12 +303,41 @@ class Player:
         self.grab_phase       = 1
         self.grab_phase_timer = Cfg.GRAB_T1_TIME
 
+    def do_primary_action(self):
+        if getattr(self.base, "game_paused", True):
+            return
+        if hasattr(self.base, "item_manager") and self.base.item_manager.is_mirror_held():
+            return
+        if hasattr(self.base, "item_manager") and self.base.item_manager.try_pickup_mirror(
+            self.player_node.getPos(),
+            self.player_node,
+        ):
+            return
+        if self.try_action():
+            return
+        self.do_grab()
+
+    def release_primary_action(self):
+        if getattr(self.base, "game_paused", True):
+            return
+        if hasattr(self.base, "item_manager"):
+            self.base.item_manager.drop_mirror(self.player_node.getPos())
+
     def do_jump(self):
         if getattr(self.base, "game_paused", True):
             return
         if self.is_grounded and self.state != PlayerState.CROUCH and self.grab_phase == 0:
             self.vel_z       = Cfg.JUMP_SPEED
             self.is_grounded = False
+            if hasattr(self.base, "level_manager"):
+                self.base.level_manager.set_player_airborne(True)
+
+    def try_action(self):
+        if getattr(self.base, "game_paused", True):
+            return False
+        if hasattr(self.base, "level_manager"):
+            return self.base.level_manager.try_player_action(self.player_node.getPos())
+        return False
 
     # ── Crescimento ──────────────────────────────────────────────────────
     def apply_growth(self, value):
@@ -327,11 +362,32 @@ class Player:
         if not hasattr(self.base, "item_manager"):
             return
         player_pos = self.player_node.getPos()
+        if self.base.item_manager.is_mirror_held():
+            return
         value = self.base.item_manager.try_grab_nearest(player_pos)
         if value is not None:
             self.apply_growth(value)
 
     # ── Loop de atualização ──────────────────────────────────────────────
+    def _move_local_y(self, distance):
+        if abs(distance) < 1e-6:
+            return
+
+        max_step = 0.35
+        steps = max(1, int(math.ceil(abs(distance) / max_step)))
+        step = distance / steps
+
+        for _ in range(steps):
+            self.player_node.setY(self.player_node, step)
+            self.base.cTrav.traverse(self.base.render)
+
+    def _sync_environment_interactions(self):
+        if hasattr(self.base, "level_manager"):
+            self.base.level_manager.set_player_airborne(not self.is_grounded)
+            self.base.level_manager.set_player_crouching(
+                self.state == PlayerState.CROUCH
+            )
+
     def control_task(self, task):
         if getattr(self.base, "game_paused", True):
             return task.cont
@@ -339,6 +395,7 @@ class Player:
         dt = self.base.clock.getDt()
 
         self._update_state(dt)
+        self._sync_environment_interactions()
 
         # Atualiza inputs do shader: wobble time + direção da luz em view space
         ld = Vec3(0.5, -0.5, 1.0).normalized()
@@ -363,9 +420,9 @@ class Player:
 
         # ── Movimento (W/S deslocam no eixo Y local do personagem) ─────
         if self.key_map["forward"]:
-            self.player_node.setY(self.player_node,  speed * dt)
+            self._move_local_y(speed * dt)
         if self.key_map["backward"]:
-            self.player_node.setY(self.player_node, -speed * dt)
+            self._move_local_y(-speed * dt)
 
         # ── Física vertical (gravidade + pulo) ───────────────────────
         gz = self._ground_z
@@ -378,6 +435,7 @@ class Player:
                 self.player_node.setZ(gz)
                 self.vel_z       = 0.0
                 self.is_grounded = True
+                self._sync_environment_interactions()
                 # Sincroniza o ciclo do walk com o pouso: o próximo
                 # passo nasce no instante zero do bounce, evitando
                 # entrar no walk no meio de um pico aleatório.
@@ -419,8 +477,10 @@ class Player:
                     if next_phase == 3:
                         self._try_grab_item()
 
-        is_moving    = self.key_map["forward"] or self.key_map["backward"]
+        is_moving = self.key_map["forward"] or self.key_map["backward"]
         is_crouching = self.key_map["crouch"]
+        if hasattr(self.base, "item_manager") and self.base.item_manager.is_mirror_held():
+            is_crouching = False
 
         if self.grab_phase != 0:
             new_state = PlayerState.GRAB

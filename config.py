@@ -40,6 +40,10 @@ CAMO_ALPHA             = 0.22
 CAMO_DURATION          = 1.0
 CAMO_COOLDOWN          = 8.0
 
+# Interacao e cenario
+INTERACT_RANGE         = 4.0
+HOUSE_LAYOUT_SCALE     = 2.6
+
 # ── Crescimento do player ────────────────────────────────────────────────
 GROWTH_PER_VALUE_UNIT  = 0.001  # acréscimo de escala por ponto de valor do item
 MAX_GROWTH_SCALE       = 2.0    # escala máxima atingível
