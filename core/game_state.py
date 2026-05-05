@@ -45,7 +45,7 @@ class GameState:
 
     def _build_hud(self):
         self._objective_text = OnscreenText(
-            text="Objetivo: encontre o ESPELHO",
+            text="Find the relic shards (0/3)",
             pos=(0.0, 0.92),
             scale=0.055,
             fg=(1, 0.95, 0.65, 1),
@@ -54,6 +54,18 @@ class GameState:
             parent=self.base.aspect2d,
             align=TextNode.ACenter,
         )
+
+        self._story_text = OnscreenText(
+            text="Lab specimen #07. The keep above hides three shards.",
+            pos=(0.0, 0.85),
+            scale=0.038,
+            fg=(0.85, 0.78, 0.95, 0.85),
+            shadow=(0, 0, 0, 1),
+            mayChange=True,
+            parent=self.base.aspect2d,
+            align=TextNode.ACenter,
+        )
+        self._story_timer = 6.0
 
         self._detect_bar = DirectWaitBar(
             text="",
@@ -221,11 +233,23 @@ class GameState:
             self._detect_label.setText("ESCONDIDO")
             self._detect_label.setFg((0.7, 1, 0.7, 0.9))
 
-        # Objective text + win check.
-        if not self.mirror_picked_up:
-            self._objective_text.setText("Objetivo: encontre e PEGUE o ESPELHO")
+        # Story intro fade-out.
+        if self._story_timer > 0.0:
+            self._story_timer = max(0.0, self._story_timer - dt)
+            alpha = min(1.0, self._story_timer / 1.5)
+            self._story_text["fg"] = (0.85, 0.78, 0.95, 0.85 * alpha)
+
+        # Shard objective + exit gate.
+        sm = getattr(self.base, "shard_manager", None)
+        collected = sm.collected_count if sm is not None else 0
+        total     = len(sm.shards) if sm is not None else Cfg.SHARD_COUNT
+
+        if sm is None or not sm.all_collected():
+            self._objective_text.setText(
+                f"Find the relic shards  ({collected}/{total})"
+            )
         else:
-            self._objective_text.setText("Objetivo: ESCAPE pela porta SUL")
+            self._objective_text.setText("All shards bound. ESCAPE south to the crypt portal.")
             player = getattr(self.base, "player", None)
             if player is not None:
                 p = player.player_node.getPos()
@@ -249,7 +273,10 @@ class GameState:
         if self.outcome != HeistOutcome.PLAYING:
             return
         self.outcome = HeistOutcome.WON
-        self._show_overlay("ESPELHO ROUBADO", "Voce escapou do castelo!")
+        self._show_overlay(
+            "RELICS BOUND",
+            "The crypt portal opens. You step through and the keep is silent.",
+        )
 
     def _show_overlay(self, title, sub):
         self._overlay_title.setText(title)
@@ -279,6 +306,10 @@ class GameState:
 
     def _reset_world(self):
         self.mirror_picked_up = False
+        self._story_timer = 6.0
+        sm = getattr(self.base, "shard_manager", None)
+        if sm is not None:
+            sm.reset()
 
         # Reset player.
         player = getattr(self.base, "player", None)

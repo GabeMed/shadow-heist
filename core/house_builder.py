@@ -188,8 +188,201 @@ class HouseBuilder:
         self._create_side_towers()
         # Static beholder prop replaced by BeholderManager AI enemies.
         self._create_external_torches()
+        self._create_castle_battlements()
+        self._create_tower_spires()
+        self._create_flying_buttresses()
         self._set_player_spawn()
         return self.root
+
+    # ------------------------------------------------------------------
+    # Gothic exterior — spires, buttresses.
+    # ------------------------------------------------------------------
+    def _create_tower_spires(self):
+        spire_color = (0.28, 0.30, 0.36, 1.0)
+        ridge_color = (0.42, 0.40, 0.36, 1.0)
+        # Tower centers from _create_side_towers (footprint half = 4.0).
+        towers = [
+            (-30.0, -14.0), (-30.0, 6.0), (-30.0, 28.0),
+            ( 30.0, -14.0), ( 30.0, 6.0), ( 30.0, 28.0),
+        ]
+        merlon_top = self.wall_height + 1.1   # match _create_castle_battlements
+        for i, (cx, cy) in enumerate(towers):
+            base_z = merlon_top + 0.2
+            self._create_spire(
+                name=f"spire_{i}",
+                cx=self._s(cx),
+                cy=self._s(cy),
+                base_z=base_z,
+                base_radius=self._s(3.6),
+                height=self._s(5.5),
+                sides=8,
+                color=spire_color,
+            )
+            # Small ridge-finial cap on top.
+            self._create_box(
+                name=f"spire_{i}_finial",
+                center=(self._s(cx), self._s(cy), base_z + self._s(5.5) + 0.45),
+                size=(0.35, 0.35, 0.9),
+                color=ridge_color,
+                collide=False,
+            )
+
+    def _create_spire(self, name, cx, cy, base_z, base_radius, height, sides, color):
+        geom_node = GeomNode(f"{name}_geom")
+        fmt = GeomVertexFormat.getV3n3t2()
+        vdata = GeomVertexData(f"{name}_vdata", fmt, Geom.UH_static)
+        vw = GeomVertexWriter(vdata, "vertex")
+        nw = GeomVertexWriter(vdata, "normal")
+        tw = GeomVertexWriter(vdata, "texcoord")
+        prim = GeomTriangles(Geom.UH_static)
+
+        step = 2.0 * math.pi / sides
+        apex_z = base_z + height
+        for i in range(sides):
+            a0 = step * i
+            a1 = step * (i + 1)
+            x0, y0 = math.cos(a0) * base_radius, math.sin(a0) * base_radius
+            x1, y1 = math.cos(a1) * base_radius, math.sin(a1) * base_radius
+            mid_a = (a0 + a1) * 0.5
+            # Outward-and-up normal so light catches the slope.
+            nx, ny, nz = math.cos(mid_a), math.sin(mid_a), 0.55
+            inv = 1.0 / math.sqrt(nx * nx + ny * ny + nz * nz)
+            nx, ny, nz = nx * inv, ny * inv, nz * inv
+
+            bi = vw.getWriteRow()
+            vw.addData3f(x0, y0, base_z); nw.addData3f(nx, ny, nz); tw.addData2f(i / sides, 0.0)
+            vw.addData3f(x1, y1, base_z); nw.addData3f(nx, ny, nz); tw.addData2f((i + 1) / sides, 0.0)
+            vw.addData3f(0.0, 0.0, apex_z); nw.addData3f(nx, ny, nz); tw.addData2f((i + 0.5) / sides, 1.0)
+            prim.addVertices(bi, bi + 1, bi + 2)
+
+        geom = Geom(vdata)
+        geom.addPrimitive(prim)
+        geom_node.addGeom(geom)
+        np = self.root.attachNewNode(geom_node)
+        np.setPos(cx, cy, 0.0)
+        np.setColor(*color)
+        np.setTwoSided(True)
+        return np
+
+    def _create_flying_buttresses(self):
+        """Inclined stone beams supporting outer walls — gothic silhouette."""
+        beam_color = (0.50, 0.50, 0.52, 1.0)
+        breadth = 0.7
+        depth = 0.55
+        wall_z = self.wall_height
+        outward = self._s(3.2)
+
+        # (axis, fixed, alongs[]) — wall normal points outward along +/- fixed axis.
+        # Generate buttresses at multiple points along each outer wall.
+        layouts = [
+            ("y", self._s(-26),  [self._s(v) for v in (-12, 0, 14, 28)], -1.0),  # west wall, normal -X
+            ("y", self._s( 26),  [self._s(v) for v in (-12, 0, 14, 28)], +1.0),  # east wall
+            ("x", self._s(-20),  [self._s(v) for v in (-22, -10, 10, 22)], -1.0),  # south wall
+            ("x", self._s( 32),  [self._s(v) for v in (-12, 0, 12)], +1.0),       # north wall
+        ]
+
+        idx = 0
+        for axis, fixed, positions, normal_sign in layouts:
+            for v in positions:
+                if axis == "y":
+                    p_top = (fixed,                     v, wall_z * 0.85)
+                    p_bot = (fixed + normal_sign * outward, v, 0.0)
+                else:
+                    p_top = (v, fixed,                     wall_z * 0.85)
+                    p_bot = (v, fixed + normal_sign * outward, 0.0)
+                self._create_inclined_beam(
+                    name=f"buttress_{idx}",
+                    p_from=p_top,
+                    p_to=p_bot,
+                    breadth=breadth,
+                    depth=depth,
+                    color=beam_color,
+                )
+                idx += 1
+
+    def _create_inclined_beam(self, name, p_from, p_to, breadth, depth, color):
+        dx = p_to[0] - p_from[0]
+        dy = p_to[1] - p_from[1]
+        dz = p_to[2] - p_from[2]
+        length = math.sqrt(dx * dx + dy * dy + dz * dz)
+        if length < 0.05:
+            return
+        midx = (p_from[0] + p_to[0]) * 0.5
+        midy = (p_from[1] + p_to[1]) * 0.5
+        midz = (p_from[2] + p_to[2]) * 0.5
+        # Heading rotates local +Y to align with horizontal projection of (dx,dy).
+        h = math.degrees(math.atan2(-dx, dy))
+        horiz = math.sqrt(dx * dx + dy * dy)
+        # Pitch tilts the local +Y down toward p_to (negative dz → nose-down).
+        p = math.degrees(math.atan2(dz, horiz))
+
+        pivot = self.root.attachNewNode(f"{name}_pivot")
+        pivot.setPos(midx, midy, midz)
+        pivot.setHpr(h, p, 0.0)
+        self._create_box(
+            name=name,
+            center=(0.0, 0.0, 0.0),
+            size=(breadth, length, depth),
+            color=color,
+            collide=False,
+            parent=pivot,
+        )
+
+    # ------------------------------------------------------------------
+    # Castle battlements — crenellated parapet on outer perimeter.
+    # ------------------------------------------------------------------
+    def _create_castle_battlements(self):
+        merlon_h = 1.1
+        merlon_w = 0.9
+        merlon_gap = 0.9
+        depth = self.wall_thickness
+        base_z = self.wall_height
+
+        # (axis, fixed, start, end). Mirror the outer-shell wall layout.
+        segments = [
+            ("x", self._s(-20), self._s(-26), self._s(26)),    # south_main
+            ("x", self._s(32),  self._s(-18), self._s(18)),    # north_main
+            ("y", self._s(-26), self._s(-20), self._s(32)),    # west_main
+            ("y", self._s(26),  self._s(-20), self._s(32)),    # east_main
+            ("x", self._s(24),  self._s(-26), self._s(-18)),   # north_low_west
+            ("x", self._s(24),  self._s(18),  self._s(26)),    # north_low_east
+        ]
+        # Tower outer walls (west cluster x=-30, east cluster x=+30).
+        for cx, cy in [(-30.0, -14.0), (-30.0, 6.0), (-30.0, 28.0)]:
+            segments.append(("y", self._s(cx - 4.0), self._s(cy - 4.0), self._s(cy + 4.0)))
+        for cx, cy in [(30.0, -14.0), (30.0, 6.0), (30.0, 28.0)]:
+            segments.append(("y", self._s(cx + 4.0), self._s(cy - 4.0), self._s(cy + 4.0)))
+
+        for axis, fixed, start, end in segments:
+            self._create_merlon_run(axis, fixed, start, end, base_z,
+                                    merlon_w, merlon_gap, merlon_h, depth)
+
+    def _create_merlon_run(self, axis, fixed, start, end, base_z,
+                           merlon_w, gap, merlon_h, depth):
+        span = end - start
+        period = merlon_w + gap
+        if span < merlon_w or period <= 0:
+            return
+        count = max(1, int(span // period))
+        # Center the merlon pattern within the run.
+        used = count * merlon_w + (count - 1) * gap
+        offset = (span - used) * 0.5
+        for i in range(count):
+            local = offset + i * period + merlon_w * 0.5
+            center_along = start + local
+            if axis == "x":
+                box_center = (center_along, fixed, base_z + merlon_h * 0.5)
+                box_size = (merlon_w, depth, merlon_h)
+            else:
+                box_center = (fixed, center_along, base_z + merlon_h * 0.5)
+                box_size = (depth, merlon_w, merlon_h)
+            self._create_box(
+                name=f"merlon_{axis}_{int(fixed*10)}_{i}",
+                center=box_center,
+                size=box_size,
+                color=self.tower_color,
+                collide=False,
+            )
 
     # ------------------------------------------------------------------
     # Public helpers
@@ -1035,19 +1228,32 @@ class HouseBuilder:
         leaf_depth = 0.12
         blocker_depth = self.wall_thickness + 0.14
         leaf_height = max(height - 0.15, 2.2)
+        # Hinge sits at the inner edge of the left jamb so the leaf swings
+        # like a real door instead of pivoting around its own center.
+        inner_w = max(width - 2.0 * self.frame_thickness, 0.05)
+        hinge_pos = (
+            (start + self.frame_thickness, fixed, 0.0) if axis == "x"
+            else (fixed, start + self.frame_thickness, 0.0)
+        )
+        # closed_h orients the pivot so the leaf lies along the wall axis.
         closed_h = 0.0 if axis == "x" else 90.0
         open_h = closed_h - 96.0
 
+        pivot = self.root.attachNewNode(f"{name}_hinge")
+        pivot.setPos(*hinge_pos)
+        # In pivot-local space the leaf always extends along +X from hinge.
         leaf = self._create_box(
             name=f"{name}_leaf",
-            center=(center, fixed, leaf_height * 0.5) if axis == "x"
-            else (fixed, center, leaf_height * 0.5),
-            size=(width, leaf_depth, leaf_height) if axis == "x"
-            else (leaf_depth, width, leaf_height),
+            center=(inner_w * 0.5, 0.0, leaf_height * 0.5),
+            size=(inner_w, leaf_depth, leaf_height),
             color=self.door_color,
             collide=False,
-            h=closed_h,
+            h=0.0,
+            parent=pivot,
         )
+        # Replace the leaf NodePath with the pivot so Door.set_open rotates
+        # the hinge instead of the box around its own center.
+        leaf = pivot
         blocker = self._create_box(
             name=f"{name}_blocker",
             center=(center, fixed, leaf_height * 0.5) if axis == "x"
