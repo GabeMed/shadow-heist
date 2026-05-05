@@ -1,7 +1,7 @@
 from panda3d.core import (
     AmbientLight, DirectionalLight, PointLight, Vec3, Vec4,
     CardMaker, CollisionPlane, Plane, CollisionNode,
-    CollisionBox, Point3, NodePath, Shader,
+    CollisionBox, Point3, NodePath, Shader, Texture,
     PTA_LVecBase3f, PTA_int, LVecBase3f,
 )
 
@@ -99,6 +99,14 @@ class LevelManager:
         )
         self._scene_shader = shader
         self.base.render.setShader(shader)
+
+        # Default 1x1 white texture so the shader's p3d_Texture0 sampler
+        # has something valid to read on geometry that never calls
+        # setTexture (otherwise sampling = black on macOS GL Core).
+        white = Texture("scene_default_white")
+        white.setup2dTexture(1, 1, Texture.T_unsigned_byte, Texture.F_rgb8)
+        white.setRamImageAs(b"\xff\xff\xff", "RGB")
+        self.base.render.setTexture(white, 0)
 
         # Static uniforms — set once.
         self.base.render.setShaderInput("ambient_color", Vec3(0.06, 0.07, 0.10))

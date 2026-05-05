@@ -1035,19 +1035,32 @@ class HouseBuilder:
         leaf_depth = 0.12
         blocker_depth = self.wall_thickness + 0.14
         leaf_height = max(height - 0.15, 2.2)
+        # Hinge sits at the inner edge of the left jamb so the leaf swings
+        # like a real door instead of pivoting around its own center.
+        inner_w = max(width - 2.0 * self.frame_thickness, 0.05)
+        hinge_pos = (
+            (start + self.frame_thickness, fixed, 0.0) if axis == "x"
+            else (fixed, start + self.frame_thickness, 0.0)
+        )
+        # closed_h orients the pivot so the leaf lies along the wall axis.
         closed_h = 0.0 if axis == "x" else 90.0
         open_h = closed_h - 96.0
 
+        pivot = self.root.attachNewNode(f"{name}_hinge")
+        pivot.setPos(*hinge_pos)
+        # In pivot-local space the leaf always extends along +X from hinge.
         leaf = self._create_box(
             name=f"{name}_leaf",
-            center=(center, fixed, leaf_height * 0.5) if axis == "x"
-            else (fixed, center, leaf_height * 0.5),
-            size=(width, leaf_depth, leaf_height) if axis == "x"
-            else (leaf_depth, width, leaf_height),
+            center=(inner_w * 0.5, 0.0, leaf_height * 0.5),
+            size=(inner_w, leaf_depth, leaf_height),
             color=self.door_color,
             collide=False,
-            h=closed_h,
+            h=0.0,
+            parent=pivot,
         )
+        # Replace the leaf NodePath with the pivot so Door.set_open rotates
+        # the hinge instead of the box around its own center.
+        leaf = pivot
         blocker = self._create_box(
             name=f"{name}_blocker",
             center=(center, fixed, leaf_height * 0.5) if axis == "x"

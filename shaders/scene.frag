@@ -18,11 +18,13 @@ uniform vec3 camera_world_pos;
 uniform vec4 p3d_ColorScale;
 
 uniform sampler2D shadow_map;
+uniform sampler2D p3d_Texture0;
 
 in vec3 v_world_pos;
 in vec3 v_world_normal;
 in vec4 v_color;
 in vec4 v_shadow_clip;
+in vec2 v_uv;
 
 out vec4 fragColor;
 
@@ -58,7 +60,8 @@ void main() {
     vec3 N = normalize(v_world_normal);
     vec3 V = normalize(camera_world_pos - v_world_pos);
 
-    vec3 base = v_color.rgb * p3d_ColorScale.rgb;
+    vec4 tex_sample = texture(p3d_Texture0, v_uv);
+    vec3 base = v_color.rgb * p3d_ColorScale.rgb * tex_sample.rgb;
     vec3 lit  = ambient_color * base;
 
     // Directional moonlight + shadow.
