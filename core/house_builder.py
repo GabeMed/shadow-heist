@@ -15,10 +15,13 @@ from panda3d.core import (
     GeomVertexData,
     GeomVertexFormat,
     GeomVertexWriter,
+    PointLight,
     Point3,
     Texture,
     TextureStage,
     TransparencyAttrib,
+    Vec3,
+    Vec4,
 )
 
 import config as Cfg
@@ -57,7 +60,13 @@ class Room:
 
 
 class Door:
-    def __init__(self, name, leaf_np, blocker_np, action_point, closed_h, open_h):
+    # Far-away coords used to "remove" the blocker's AABB from the raytrace
+    # scene when the door is open (cheaper than resizing the PTA array).
+    _AABB_OPEN_SENTINEL = (1.0e6, 1.0e6, 1.0e6)
+
+    def __init__(self, name, leaf_np, blocker_np, action_point,
+                 closed_h, open_h, blocker_aabb_index=None,
+                 blocker_aabb=None, base=None):
         self.name = name
         self.leaf_np = leaf_np
         self.blocker_np = blocker_np
@@ -67,6 +76,10 @@ class Door:
         self.is_open = False
         self.closed_mask = BitMask32.bit(1)
         self.open_mask = BitMask32.allOff()
+        # Raytraced-shadow bookkeeping.
+        self.blocker_aabb_index = blocker_aabb_index
+        self.blocker_aabb_closed = blocker_aabb
+        self.base = base
         self.set_open(False)
 
     def set_open(self, is_open):
@@ -75,6 +88,25 @@ class Door:
         self.blocker_np.node().setIntoCollideMask(
             self.open_mask if is_open else self.closed_mask
         )
+        self._sync_raytrace_aabb()
+
+    def _sync_raytrace_aabb(self):
+        # base.level_manager isn't bound until ShadowHeist.__init__ finishes;
+        # the initial set_open(False) during construction therefore short-
+        # circuits here. By the time the player toggles the door, both base
+        # and level_manager exist and we live-update the PTA entry so the
+        # shader sees the open hole.
+        if self.blocker_aabb_index is None or self.base is None:
+            return
+        lm = getattr(self.base, "level_manager", None)
+        if lm is None or not hasattr(lm, "update_aabb"):
+            return
+        if self.is_open:
+            far = self._AABB_OPEN_SENTINEL
+            lm.update_aabb(self.blocker_aabb_index, far, far)
+        elif self.blocker_aabb_closed is not None:
+            mn, mx = self.blocker_aabb_closed
+            lm.update_aabb(self.blocker_aabb_index, mn, mx)
 
     def toggle(self):
         self.set_open(not self.is_open)
@@ -118,7 +150,7 @@ class HouseBuilder:
         self.root = self.parent.attachNewNode("castle_root")
 
         self.layout_scale = Cfg.HOUSE_LAYOUT_SCALE
-        self.wall_height = 6.2
+        self.wall_height = 8.4
         self.wall_thickness = 0.82
         self.frame_thickness = 0.16
         self.door_height = 3.4
@@ -150,6 +182,10 @@ class HouseBuilder:
             "tapete-central",
             "castle_central_carpet_texture",
         )
+        self.door_texture = self._load_image_texture(
+            "Planks003_2K-JPG_Color.jpg",
+            "castle_door_texture",
+        )
         self.torch_model = self._load_torch_model()
         self.beholder_model = self._load_beholder_model()
         for texture in (
@@ -157,6 +193,7 @@ class HouseBuilder:
             self.internal_wall_texture,
             *self.floor_textures,
             self.central_carpet_texture,
+            self.door_texture,
         ):
             if texture:
                 texture.setWrapU(Texture.WM_repeat)
@@ -178,16 +215,22 @@ class HouseBuilder:
         self.crouch_passage_barriers = []
         self.player_spawn = Point3(0, 0, 0)
         self.beholder_np = None
+        # Axis-aligned bounding boxes for raytraced shadows. Populated by
+        # _create_box when the box is a static, axis-aligned occluder.
+        self.aabbs = []
 
     def build(self):
         self._define_rooms()
         self._create_room_floors()
+        self._create_room_ceilings()
         self._create_outer_shell()
         self._create_internal_walls()
         self._create_central_hall_columns()
         self._create_side_towers()
         # Static beholder prop replaced by BeholderManager AI enemies.
         self._create_external_torches()
+        self._create_interior_torches()
+        self._create_swinging_lantern()
         self._create_castle_battlements()
         self._create_tower_spires()
         self._create_flying_buttresses()
@@ -409,6 +452,19 @@ class HouseBuilder:
         except OSError:
             return None
 
+    def _load_image_texture(self, filename, texture_name):
+        assets_dir = Path(__file__).resolve().parent.parent / "assets"
+        path = assets_dir / filename
+        if not path.exists():
+            return None
+        try:
+            tex = self.base.loader.loadTexture(Filename.fromOsSpecific(str(path)))
+        except OSError:
+            return None
+        if tex:
+            tex.setName(texture_name)
+        return tex
+
     def _load_torch_model(self):
         assets_dir = Path(__file__).resolve().parent.parent / "assets"
         model_path = assets_dir / "emberlit_torch.egg"
@@ -602,6 +658,46 @@ class HouseBuilder:
 
         self._create_central_hall_carpet()
 
+    def _create_room_ceilings(self):
+        ceiling_color = (0.32, 0.30, 0.28, 1.0)
+        ceiling_texture = self.internal_wall_texture
+        z = self.wall_height - 0.04
+        for room in self.rooms:
+            self.create_ceiling(
+                f"{room.name}_ceiling",
+                room.x1,
+                room.x2,
+                room.y1,
+                room.y2,
+                ceiling_color,
+                texture=ceiling_texture,
+                z=z,
+            )
+        # Cover the sealed inner alleys (no Room entry but inside envelope).
+        for alley_name, x1_raw, x2_raw in (
+            ("alley_west", -12, -10),
+            ("alley_east", 10, 12),
+        ):
+            self.create_ceiling(
+                f"{alley_name}_ceiling",
+                self._s(x1_raw),
+                self._s(x2_raw),
+                self._s(6),
+                self._s(12),
+                ceiling_color,
+                texture=ceiling_texture,
+                z=z,
+            )
+            self.create_floor(
+                f"{alley_name}_floor",
+                self._s(x1_raw),
+                self._s(x2_raw),
+                self._s(6),
+                self._s(12),
+                (0.34, 0.32, 0.30, 1.0),
+                texture=self.floor_textures[0] if self.floor_textures else None,
+            )
+
     def _floor_texture_for_room(self, index, room):
         if room.name == "salao_central" and len(self.floor_textures) >= 3:
             return self.floor_textures[2]
@@ -768,7 +864,6 @@ class HouseBuilder:
             end=self._s(12),
             openings=[
                 Opening("door", self._s(-1), self._s(2.0), 0.0, self.door_height),
-                Opening("crawl", self._s(8), self._s(2.2), 0.0, self.crawl_passage_height),
             ],
         )
         self._build_wall_run(
@@ -779,7 +874,6 @@ class HouseBuilder:
             end=self._s(12),
             openings=[
                 Opening("door", self._s(-1), self._s(2.0), 0.0, self.door_height),
-                Opening("window_jump", self._s(8), self._s(2.6), self.jump_window_sill, self.jump_window_top),
             ],
         )
         self._build_wall_run(
@@ -787,16 +881,34 @@ class HouseBuilder:
             axis="x",
             fixed=self._s(6),
             start=self._s(-26),
-            end=self._s(-12),
+            end=self._s(-10),
             openings=[Opening("crawl", self._s(-19), self._s(2.0), 0.0, self.crawl_passage_height)],
         )
         self._build_wall_run(
             name="east_to_treasury",
             axis="x",
             fixed=self._s(6),
-            start=self._s(12),
+            start=self._s(10),
             end=self._s(26),
             openings=[Opening("crawl", self._s(19), self._s(2.0), 0.0, self.crawl_passage_height)],
+        )
+        # Seal the void alleys between salao_central and despensa/tesouro:
+        # despensa east face (x=-12, y=6..12) and tesouro west face (x=12, y=6..12).
+        self.create_wall(
+            "alley_west_seal",
+            "y",
+            self._s(-12),
+            self._s(6),
+            self._s(12),
+            wall_role="internal",
+        )
+        self.create_wall(
+            "alley_east_seal",
+            "y",
+            self._s(12),
+            self._s(6),
+            self._s(12),
+            wall_role="internal",
         )
         self._build_wall_run(
             name="pantry_to_ante",
@@ -896,19 +1008,27 @@ class HouseBuilder:
         )
 
     def _create_central_hall_columns(self):
+        # Box pillars (instead of the older round geom) so each one registers
+        # as an AABB and casts crisp star-pattern shadows under wisp lights.
         column_positions = [
-            (-5.5, -4.0),
-            (5.5, -4.0),
-            (-5.5, 4.0),
-            (5.5, 4.0),
+            (-6.0, -4.5), ( 6.0, -4.5),
+            (-6.0,  4.5), ( 6.0,  4.5),
+            (-6.0,  0.0), ( 6.0,  0.0),
+            ( 0.0, -4.5), ( 0.0,  4.5),
         ]
-
+        side = self._s(0.65)
+        # Reach all the way from the floor card to just under the ceiling so
+        # the pendulum lantern's shadow streaks across the wall, not just the
+        # lower half.
+        height = self.wall_height - 0.08
         for index, (x, y) in enumerate(column_positions):
-            self._create_round_pillar(
-                name=f"central_column_{index}",
-                center=(self._s(x), self._s(y), 2.4),
-                radius=self._s(0.72),
-                height=4.8,
+            self._create_box(
+                name=f"central_pillar_{index}",
+                center=(self._s(x), self._s(y), height * 0.5 + 0.04),
+                size=(side, side, height),
+                color=self.column_color,
+                collide=True,
+                texture=self.internal_wall_texture,
             )
 
     def _create_side_towers(self):
@@ -942,6 +1062,137 @@ class HouseBuilder:
             torch_np.setName(f"castle_torch_{index}")
             torch_np.setPos(*pos)
             torch_np.setH(h)
+
+    def _create_interior_torches(self):
+        """Floating arcane wisps — one per room. Mid-air emissive orb plus a
+        co-located warm point light. Bobs and drifts via _wisp_anim_task."""
+        if getattr(Cfg, "DAYLIGHT_MODE", False):
+            return
+
+        from panda3d.core import Shader
+        unlit_shader = Shader.load(
+            Shader.SL_GLSL,
+            vertex="shaders/unlit.vert",
+            fragment="shaders/unlit.frag",
+        )
+
+        wisp_root = self.root.attachNewNode("castle_wisps")
+        light_color = Vec4(4.20, 2.60, 1.00, 1.0)
+        light_atten = Vec3(1.0, 0.05, 0.04)
+        base_z = 6.6
+        self._wisps = []
+
+        for index, room in enumerate(self.rooms):
+            # Skip salao_central; the swinging lantern owns this room so its
+            # shadows aren't washed out by a static wisp at the same height.
+            if room.name == "salao_central":
+                continue
+            cx = (room.x1 + room.x2) * 0.5
+            cy = (room.y1 + room.y2) * 0.5
+
+            wisp_np = wisp_root.attachNewNode(f"wisp_{index}")
+            wisp_np.setPos(cx, cy, base_z)
+
+            core = self.base.loader.loadModel("models/misc/sphere")
+            core.reparentTo(wisp_np)
+            core.setScale(0.32)
+            core.setColorScale(2.40, 1.70, 0.80, 1.0)
+            core.setShader(unlit_shader, 100)
+            core.setLightOff(1)
+
+            halo = self.base.loader.loadModel("models/misc/sphere")
+            halo.reparentTo(wisp_np)
+            halo.setScale(0.95)
+            halo.setColorScale(1.6, 0.85, 0.35, 0.22)
+            halo.setTransparency(TransparencyAttrib.M_alpha)
+            halo.setBin("transparent", 5)
+            halo.setDepthWrite(False)
+            halo.setShader(unlit_shader, 100)
+            halo.setLightOff(1)
+
+            plight = PointLight(f"wisp_light_{index}")
+            plight.setColor(light_color)
+            plight.setAttenuation(light_atten)
+            light_np = wisp_np.attachNewNode(plight)
+            self.base.render.setLight(light_np)
+
+            phase = index * 0.83
+            self._wisps.append((wisp_np, cx, cy, base_z, phase))
+
+        self.base.taskMgr.add(self._wisp_anim_task, "castle_wisp_anim")
+
+    def _create_swinging_lantern(self):
+        """Pendulum lantern in salao_central (the pillar room). Hangs from
+        the ceiling and swings on a sine curve so its hard shadows sweep
+        across the pillars and walls live — direct showcase of dynamic
+        raytraced omnidirectional point shadows."""
+        if getattr(Cfg, "DAYLIGHT_MODE", False):
+            return
+
+        sala = next((r for r in self.rooms if r.name == "salao_central"), None)
+        if sala is None:
+            return
+
+        from panda3d.core import Shader
+        unlit_shader = Shader.load(
+            Shader.SL_GLSL,
+            vertex="shaders/unlit.vert",
+            fragment="shaders/unlit.frag",
+        )
+
+        cx = (sala.x1 + sala.x2) * 0.5
+        cy = (sala.y1 + sala.y2) * 0.5
+
+        pivot = self.root.attachNewNode("throne_lantern_pivot")
+        pivot.setPos(cx, cy, self.wall_height - 0.15)
+
+        bob = pivot.attachNewNode("throne_lantern_bob")
+        bob.setPos(0.0, 0.0, -3.2)
+
+        core = self.base.loader.loadModel("models/misc/sphere")
+        core.reparentTo(bob)
+        core.setScale(0.45)
+        core.setColorScale(2.80, 2.00, 0.90, 1.0)
+        core.setShader(unlit_shader, 100)
+        core.setLightOff(1)
+
+        halo = self.base.loader.loadModel("models/misc/sphere")
+        halo.reparentTo(bob)
+        halo.setScale(1.15)
+        halo.setColorScale(2.00, 1.10, 0.45, 0.25)
+        halo.setTransparency(TransparencyAttrib.M_alpha)
+        halo.setBin("transparent", 5)
+        halo.setDepthWrite(False)
+        halo.setShader(unlit_shader, 100)
+        halo.setLightOff(1)
+
+        plight = PointLight("throne_lantern_light")
+        plight.setColor(Vec4(4.50, 2.80, 1.10, 1.0))
+        plight.setAttenuation(Vec3(1.0, 0.04, 0.03))
+        light_np = bob.attachNewNode(plight)
+        self.base.render.setLight(light_np)
+
+        self._throne_lantern_pivot = pivot
+        self.base.taskMgr.add(self._throne_lantern_task, "throne_lantern_anim")
+
+    def _throne_lantern_task(self, task):
+        if getattr(self.base, "game_paused", True):
+            return task.cont
+        t = self.base.clock.getFrameTime()
+        swing_deg = 24.0 * math.sin(t * 1.15)
+        self._throne_lantern_pivot.setR(swing_deg)
+        return task.cont
+
+    def _wisp_anim_task(self, task):
+        if getattr(self.base, "game_paused", True):
+            return task.cont
+        t = self.base.clock.getFrameTime()
+        for np, cx, cy, bz, phase in self._wisps:
+            z = bz + 0.28 * math.sin(t * 1.6 + phase)
+            x = cx + 0.22 * math.sin(t * 0.7 + phase * 1.3)
+            y = cy + 0.22 * math.cos(t * 0.6 + phase * 1.7)
+            np.setPos(x, y, z)
+        return task.cont
 
     def _create_beholder(self):
         if self.beholder_model is None:
@@ -1048,6 +1299,17 @@ class HouseBuilder:
             (0.42, 0.42, 0.45, 1.0),
         )
 
+        self.create_ceiling(
+            f"{name}_ceiling",
+            x1 + self.wall_thickness,
+            x2 - self.wall_thickness,
+            y1 + self.wall_thickness,
+            y2 - self.wall_thickness,
+            (0.32, 0.30, 0.28, 1.0),
+            texture=self.internal_wall_texture,
+            z=self.wall_height - 0.04,
+        )
+
         if outer_side == "west":
             self._build_wall_run(
                 name=f"{name}_outer",
@@ -1135,6 +1397,36 @@ class HouseBuilder:
             floor.setColor(*color)
         floor.setTwoSided(True)
         return floor
+
+    def create_ceiling(self, name, x1, x2, y1, y2, color, texture=None, z=None, texture_tile_size=None):
+        cm = CardMaker(f"{name}_ceiling")
+        cm.setFrame(x1, x2, y1, y2)
+        ceiling = self.root.attachNewNode(cm.generate())
+        # Same orientation as floor (setP(-90) keeps the X/Y mapping intact);
+        # rely on setTwoSided so the underside is visible from inside the room.
+        ceiling.setP(-90)
+        ceiling_z = self.wall_height if z is None else z
+        ceiling.setZ(ceiling_z)
+        # Register a thin AABB so the ceiling occludes shadow rays in the
+        # raytraced lighting pass (otherwise moonlight bleeds through the
+        # roof onto interior floors).
+        self.aabbs.append((
+            (x1, y1, ceiling_z - 0.04),
+            (x2, y2, ceiling_z + 0.04),
+        ))
+        if texture:
+            texture_tile_size = self.floor_texture_tile_size if texture_tile_size is None else texture_tile_size
+            ceiling.setColor(0.78, 0.76, 0.72, 1.0)
+            ceiling.setTexture(texture, 1)
+            ceiling.setTexScale(
+                TextureStage.getDefault(),
+                max((x2 - x1) / texture_tile_size, 1.0),
+                max((y2 - y1) / texture_tile_size, 1.0),
+            )
+        else:
+            ceiling.setColor(*color)
+        ceiling.setTwoSided(True)
+        return ceiling
 
     def create_wall(
         self,
@@ -1242,14 +1534,16 @@ class HouseBuilder:
         pivot = self.root.attachNewNode(f"{name}_hinge")
         pivot.setPos(*hinge_pos)
         # In pivot-local space the leaf always extends along +X from hinge.
+        door_texture = self.door_texture or (self.floor_textures[0] if self.floor_textures else None)
         leaf = self._create_box(
             name=f"{name}_leaf",
             center=(inner_w * 0.5, 0.0, leaf_height * 0.5),
             size=(inner_w, leaf_depth, leaf_height),
-            color=self.door_color,
+            color=(1.0, 1.0, 1.0, 1.0) if door_texture else self.door_color,
             collide=False,
             h=0.0,
             parent=pivot,
+            texture=door_texture,
         )
         # Replace the leaf NodePath with the pivot so Door.set_open rotates
         # the hinge instead of the box around its own center.
@@ -1267,6 +1561,11 @@ class HouseBuilder:
         blocker.setTransparency(TransparencyAttrib.M_alpha)
         blocker.setColorScale(1.0, 1.0, 1.0, 0.0)
 
+        # The blocker just registered itself as the most recent AABB; capture
+        # its index + closed bounds so the Door can flip the entry on toggle.
+        blocker_aabb_index = len(self.aabbs) - 1 if self.aabbs else None
+        blocker_aabb_closed = self.aabbs[-1] if self.aabbs else None
+
         door = Door(
             name=name,
             leaf_np=leaf,
@@ -1275,6 +1574,9 @@ class HouseBuilder:
             else Point3(fixed, center, 0.0),
             closed_h=closed_h,
             open_h=open_h,
+            blocker_aabb_index=blocker_aabb_index,
+            blocker_aabb=blocker_aabb_closed,
+            base=self.base,
         )
         self.doors.append(door)
         return door
@@ -1546,7 +1848,25 @@ class HouseBuilder:
         texture=None,
         face_textures=None,
         parent=None,
+        cast_shadow=None,
     ):
+        # Decide whether this box should occlude shadow rays. Default: occlude
+        # when collidable AND axis-aligned to a 90° grid (so its world-space
+        # AABB still wraps it tightly). Caller may force True/False.
+        if cast_shadow is None:
+            cast_shadow = collide and (abs(((h % 180.0) + 180.0) % 180.0) < 0.5
+                                       or abs(((h % 180.0) + 180.0) % 180.0 - 90.0) < 0.5)
+        if cast_shadow and parent is None:
+            cx, cy, cz = center
+            sx, sy, sz = size
+            angle = ((h % 180.0) + 180.0) % 180.0
+            if abs(angle - 90.0) < 0.5:
+                sx, sy = sy, sx
+            half = (sx * 0.5, sy * 0.5, sz * 0.5)
+            self.aabbs.append((
+                (cx - half[0], cy - half[1], cz - half[2]),
+                (cx + half[0], cy + half[1], cz + half[2]),
+            ))
         cm = CardMaker(name)
         cm.setFrame(-0.5, 0.5, -0.5, 0.5)
 

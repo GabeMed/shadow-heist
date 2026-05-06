@@ -79,6 +79,7 @@ class Player:
         self.is_camouflaged          = False
         self.camo_active_timer       = 0.0
         self.camo_cooldown_timer     = 0.0
+        self.stealth_power           = Cfg.STEALTH_POWER_START
         # Acumulador para osciladores procedurais (idle/walk/crouch-walk).
         # Avança em _update_state e zera ao aterrissar para sincronizar o
         # bounce do walk com o instante do pouso.
@@ -107,6 +108,9 @@ class Player:
             self.base.accept(key + "-up", self.update_key_map, [action, False])
 
         self.base.accept("e",      self.toggle_camouflage)
+        self.is_looking_up = False
+        self.base.accept("q",      self._set_looking_up, [True])
+        self.base.accept("q-up",   self._set_looking_up, [False])
         self.base.accept("f",      self.try_action)
         self.base.accept("space",  self.do_jump)
         self.base.accept("mouse1", self.do_primary_action)
@@ -191,12 +195,10 @@ class Player:
 
         self.model = self.model_normal
 
-        eye_light = PointLight("eye_light")
-        eye_light.setColor((0.9, 0.70, 0.10, 1))
-        eye_light.setAttenuation((1, 0, 0.05))
-        self.eye_light_np = self.player_node.attachNewNode(eye_light)
-        self.eye_light_np.setPos(0, 0.8, 0.5)
-        self.base.render.setLight(self.eye_light_np)
+        # Eye light removed: the slime previously carried its own PointLight
+        # which masked the raytraced shadow showcase. Visibility now comes
+        # entirely from the wisps + torches + moonlight.
+        self.eye_light_np = None
 
     def _update_active_model(self):
         """Troca o modelo visível ao mudar de estado; transfere camuflagem."""
@@ -215,6 +217,8 @@ class Player:
         if target is self.model:
             return
         old = self.model
+        old.setZ(0)
+        old.setP(0)
         old.hide()
         target.show()
         self.model = target
@@ -285,6 +289,23 @@ class Player:
                 self.body_scale[i] += math.copysign(step, diff)
         # growth_scale é aplicado multiplicando body_scale para não perder o squish
         self.model.setScale(self.body_scale * self.growth_scale)
+
+        # Vertical hop + forward lean: gives a real sense of locomotion.
+        if self.is_grounded and self.state == PlayerState.WALK:
+            t = self.anim_time
+            hop = Cfg.WALK_HOP_AMPLITUDE * abs(math.sin(t * Cfg.ANIM_WALK_FREQ)) * self.growth_scale
+            lean = Cfg.WALK_LEAN_DEG * math.sin(t * Cfg.ANIM_WALK_FREQ)
+        elif self.is_grounded and self.state == PlayerState.CROUCH and (
+            self.key_map["forward"] or self.key_map["backward"]
+        ):
+            t = self.anim_time
+            hop = Cfg.CRAWL_HOP_AMPLITUDE * abs(math.sin(t * Cfg.ANIM_CRAWL_FREQ)) * self.growth_scale
+            lean = 0.0
+        else:
+            hop = 0.0
+            lean = 0.0
+        self.model.setZ(hop)
+        self.model.setP(lean)
 
     def attach_camera(self, camera):
         """Reposiciona a câmera atrás do personagem (saída do free-cam)."""
@@ -370,7 +391,7 @@ class Player:
             return
         value = self.base.item_manager.try_grab_nearest(player_pos)
         if value is not None:
-            self.apply_growth(value)
+            self.add_stealth_power(value)
 
     # ── Loop de atualização ──────────────────────────────────────────────
     def _move_local_y(self, distance):
@@ -547,30 +568,38 @@ class Player:
             self.land_squash_timer = max(0.0, self.land_squash_timer - dt)
 
         if self.is_camouflaged:
-            self.camo_active_timer -= dt
-            if self.camo_active_timer <= 0.0:
+            self.stealth_power = max(0.0, self.stealth_power - Cfg.STEALTH_DRAIN_PER_SEC * dt)
+            if self.stealth_power <= 0.0:
                 self._deactivate_camouflage()
-        elif self.camo_cooldown_timer > 0.0:
-            self.camo_cooldown_timer -= dt
 
     # ── Camuflagem ───────────────────────────────────────────────────────
+    def _set_looking_up(self, state):
+        self.is_looking_up = bool(state)
+
     def toggle_camouflage(self):
         if getattr(self.base, "game_paused", True):
             return
-        if self.is_camouflaged or self.camo_cooldown_timer > 0.0:
+        if self.is_camouflaged:
+            self._deactivate_camouflage()
+            return
+        if self.stealth_power < Cfg.STEALTH_MIN_TO_ACTIVATE:
             return
 
-        self.is_camouflaged    = True
-        self.camo_active_timer = Cfg.CAMO_DURATION
+        self.is_camouflaged = True
         self.model.setTransparency(TransparencyAttrib.M_alpha)
         self.model.setColorScale(0.4, 0.9, 1.0, Cfg.CAMO_ALPHA)
 
     def _deactivate_camouflage(self):
-        self.is_camouflaged      = False
-        self.camo_active_timer   = 0.0
-        self.camo_cooldown_timer = Cfg.CAMO_COOLDOWN
+        self.is_camouflaged    = False
+        self.camo_active_timer = 0.0
         self.model.clearColorScale()
         self.model.clearTransparency()
+
+    def add_stealth_power(self, amount):
+        self.stealth_power = min(Cfg.STEALTH_POWER_MAX, self.stealth_power + amount)
+
+    def get_stealth_fraction(self):
+        return self.stealth_power / Cfg.STEALTH_POWER_MAX
 
     # ── Rotação manual da câmera (mouse) ─────────────────────────────────
     def _handle_mouse(self):
@@ -682,8 +711,8 @@ class Player:
             pivot.z + self.cam_dist_current * sin_p,
         )
 
-        # Aim slightly forward of pivot so the player is framed lower-center.
-        self.floater.setPos(pivot)
+        aim_lift = Cfg.SKYLOOK_AIM_LIFT if getattr(self, "is_looking_up", False) else 0.0
+        self.floater.setPos(pivot.x, pivot.y, pivot.z + aim_lift)
         self.base.camera.lookAt(self.floater)
 
     # ── Interface para o sistema de guardas ───────────────────────────────

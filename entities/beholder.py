@@ -3,12 +3,13 @@ import random
 from enum import Enum, auto
 
 from panda3d.core import (
-    NodePath, Vec3, Vec4, Point3, PointLight,
+    NodePath, Vec3, Vec4, Point3, PointLight, CollisionSphere,
     CollisionNode, CollisionSegment, CollisionHandlerQueue, BitMask32,
     LineSegs,
 )
 
 import config as Cfg
+from core.beholder_movement import choose_unblocked_direction, movement_blocked_by_hit
 from core.shadow_pass import SHADOW_CASTER_BIT
 
 
@@ -16,6 +17,10 @@ class BeholderState(Enum):
     PATROL     = auto()
     SUSPICIOUS = auto()
     ALERT      = auto()
+
+
+MODEL_HEADING_OFFSET_DEG = 180.0
+MODEL_COLOR_SCALE = (0.72, 0.86, 1.25, 1.0)
 
 
 class Beholder:
@@ -40,6 +45,13 @@ class Beholder:
         self.root = base.render.attachNewNode("beholder_root")
         self.model = model_template.copyTo(self.root)
         self.model.setName("beholder_model")
+        # The imported mesh faces backward relative to Panda's +Y forward axis.
+        self.model.setH(MODEL_HEADING_OFFSET_DEG)
+        self.model.setColorScale(*MODEL_COLOR_SCALE)
+        self._movement_traverser = getattr(base, "cTrav", None)
+        self._movement_pusher = getattr(base, "pusher", None)
+        self._coll_np = None
+        self._setup_collision()
 
         self.hover_z   = Cfg.BEHOLDER_HOVER_Z
         self.bob_phase = random.uniform(0.0, math.tau)
@@ -79,9 +91,24 @@ class Beholder:
             self._los_np = None
             self._los_queue = None
 
+        if self.los_traverser is not None:
+            self._move_probe_seg = CollisionSegment(0, 0, 0, 0, 1, 0)
+            probe_node = CollisionNode("beholder_move_probe")
+            probe_node.addSolid(self._move_probe_seg)
+            probe_node.setFromCollideMask(self.los_mask if self.los_mask is not None
+                                          else BitMask32.bit(1))
+            probe_node.setIntoCollideMask(BitMask32.allOff())
+            self._move_probe_np = self.root.attachNewNode(probe_node)
+            self._move_probe_queue = CollisionHandlerQueue()
+            self.los_traverser.addCollider(self._move_probe_np, self._move_probe_queue)
+        else:
+            self._move_probe_seg = None
+            self._move_probe_np = None
+            self._move_probe_queue = None
+
         # Vision cone debug viz.
         self._cone_np = None
-        self._cone_visible = True
+        self._cone_visible = False
         self._rebuild_cone()
 
     # ------------------------------------------------------------------
@@ -137,6 +164,13 @@ class Beholder:
             self._glow_np.removeNode()
         if self.los_traverser is not None and self._los_np is not None:
             self.los_traverser.removeCollider(self._los_np)
+        if self.los_traverser is not None and self._move_probe_np is not None:
+            self.los_traverser.removeCollider(self._move_probe_np)
+        if self._movement_traverser is not None and self._coll_np is not None:
+            self._movement_traverser.removeCollider(self._coll_np)
+        if (self._movement_pusher is not None and self._coll_np is not None
+                and hasattr(self._movement_pusher, "removeCollider")):
+            self._movement_pusher.removeCollider(self._coll_np)
         if self._cone_np is not None:
             self._cone_np.removeNode()
         self.root.removeNode()
@@ -155,6 +189,20 @@ class Beholder:
     # ------------------------------------------------------------------
     # Behaviors
     # ------------------------------------------------------------------
+
+    def _setup_collision(self):
+        if self._movement_traverser is None or self._movement_pusher is None:
+            return
+
+        coll_node = CollisionNode("beholder_body")
+        coll_node.addSolid(CollisionSphere(0, 0, 0, Cfg.BEHOLDER_COLLISION_RADIUS))
+        coll_node.setFromCollideMask(self.los_mask if self.los_mask is not None
+                                     else BitMask32.bit(1))
+        coll_node.setIntoCollideMask(BitMask32.allOff())
+
+        self._coll_np = self.root.attachNewNode(coll_node)
+        self._movement_pusher.addCollider(self._coll_np, self.root)
+        self._movement_traverser.addCollider(self._coll_np, self._movement_pusher)
 
     def _patrol(self, dt):
         if not self.waypoints:
@@ -193,12 +241,75 @@ class Beholder:
             return True
         delta.normalize()
         step = min(speed * dt, dist)
-        new_xy = Vec3(pos.x, pos.y, 0) + delta * step
-        self.root.setPos(new_xy.x, new_xy.y, pos.z)
         # Face movement direction.
         target_h = math.degrees(math.atan2(-delta.x, delta.y))
         self._set_heading_smooth(target_h, dt, Cfg.BEHOLDER_TURN_SPEED)
-        return step >= dist
+        self._move_flat(delta, step)
+
+        new_pos = self.root.getPos()
+        remaining = flat_target - Vec3(new_pos.x, new_pos.y, self.hover_z)
+        return remaining.length() < 0.25
+
+    def _move_flat(self, direction, distance):
+        if distance <= 1e-6:
+            return
+
+        steps = max(1, int(math.ceil(distance / Cfg.BEHOLDER_MOVE_MAX_STEP)))
+        step = distance / steps
+        for _ in range(steps):
+            move_direction = self._choose_move_direction(direction, step)
+            if move_direction is None:
+                return
+            pos = self.root.getPos()
+            self.root.setPos(
+                pos.x + move_direction.x * step,
+                pos.y + move_direction.y * step,
+                pos.z,
+            )
+            if self._movement_traverser is not None:
+                self._movement_traverser.traverse(self.base.render)
+
+    def _choose_move_direction(self, direction, step):
+        chosen = choose_unblocked_direction(
+            (direction.x, direction.y),
+            lambda candidate: self._movement_blocked(
+                Vec3(candidate[0], candidate[1], 0.0),
+                step,
+            ),
+        )
+        if chosen is None:
+            return None
+        return Vec3(chosen[0], chosen[1], 0.0)
+
+    def _movement_blocked(self, direction, step):
+        if self._move_probe_seg is None or self.los_traverser is None:
+            return False
+
+        pos = self.root.getPos()
+        probe_distance = step + Cfg.BEHOLDER_COLLISION_RADIUS + 0.05
+        end = Point3(
+            pos.x + direction.x * probe_distance,
+            pos.y + direction.y * probe_distance,
+            pos.z,
+        )
+        local_end = self.root.getRelativePoint(self.base.render, end)
+
+        self._move_probe_seg.setPointA(0, 0, 0)
+        self._move_probe_seg.setPointB(local_end.x, local_end.y, 0)
+        self._move_probe_queue.clearEntries()
+        self.los_traverser.traverse(self.base.render)
+        if self._move_probe_queue.getNumEntries() == 0:
+            return False
+
+        self._move_probe_queue.sortEntries()
+        hit = self._move_probe_queue.getEntry(0)
+        hit_pos = hit.getSurfacePoint(self.base.render)
+        hit_distance = (Vec3(hit_pos.x - pos.x, hit_pos.y - pos.y, 0.0)).length()
+        return movement_blocked_by_hit(
+            hit_distance,
+            step,
+            Cfg.BEHOLDER_COLLISION_RADIUS,
+        )
 
     def _face_toward(self, target, dt, speed):
         pos = self.root.getPos()
@@ -318,6 +429,8 @@ class Beholder:
         self._cone_np.setShaderOff()
         self._cone_np.setTransparency(True)
         self._cone_np.hide(BitMask32.bit(SHADOW_CASTER_BIT))
+        if not self._cone_visible:
+            self._cone_np.hide()
 
     def _update_cone_color(self):
         if self._cone_np is None:

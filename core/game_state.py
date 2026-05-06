@@ -89,6 +89,27 @@ class GameState:
             mayChange=True,
         )
 
+        self._stealth_bar = DirectWaitBar(
+            text="",
+            value=0.0,
+            range=1.0,
+            pos=(0, 0, -0.74),
+            scale=0.45,
+            barColor=(0.30, 0.85, 1.0, 0.95),
+            frameColor=(0, 0, 0, 0.55),
+            parent=self.base.aspect2d,
+        )
+        self._stealth_label = OnscreenText(
+            text="STEALTH",
+            pos=(0.0, -0.69),
+            scale=0.04,
+            fg=(0.6, 0.95, 1.0, 0.9),
+            shadow=(0, 0, 0, 1),
+            parent=self.base.aspect2d,
+            align=TextNode.ACenter,
+            mayChange=True,
+        )
+
     def _build_vignette(self):
         """Four red edge strips on render2d that tint stronger with detection."""
         thick = 0.18
@@ -197,6 +218,21 @@ class GameState:
         bm = getattr(self.base, "beholder_manager", None)
         det = bm.max_detection() if bm is not None else 0.0
         self._detect_bar["value"] = det
+
+        # Stealth power HUD.
+        player = getattr(self.base, "player", None)
+        if player is not None and hasattr(player, "get_stealth_fraction"):
+            frac = player.get_stealth_fraction()
+            self._stealth_bar["value"] = frac
+            if player.is_camouflaged:
+                self._stealth_bar["barColor"] = (0.30, 0.85, 1.0, 0.95)
+                self._stealth_label.setText("STEALTH ATIVO")
+            elif frac < Cfg.STEALTH_MIN_TO_ACTIVATE / Cfg.STEALTH_POWER_MAX:
+                self._stealth_bar["barColor"] = (0.55, 0.55, 0.55, 0.85)
+                self._stealth_label.setText("STEALTH (vazio)")
+            else:
+                self._stealth_bar["barColor"] = (0.20, 0.55, 0.85, 0.9)
+                self._stealth_label.setText("STEALTH (E)")
 
         # Vignette intensity tied to detection (smoothed via gamma).
         vig_alpha = min(1.0, det ** 1.4) * 0.65
@@ -319,6 +355,9 @@ class GameState:
             player.player_node.setPos(spawn)
             player.vel_z = 0.0
             player.is_grounded = True
+            player.stealth_power = Cfg.STEALTH_POWER_START
+            if player.is_camouflaged:
+                player._deactivate_camouflage()
 
         # Reset mirror.
         item_mgr = getattr(self.base, "item_manager", None)
