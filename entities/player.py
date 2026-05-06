@@ -632,7 +632,7 @@ class Player:
         win.movePointer(0, cx, cy)
         if self.base.game_paused:
             return
-        self._orbit_camera(-dx * Cfg.MOUSE_SENS)
+        self._orbit_camera(dx * Cfg.MOUSE_SENS)
         self._pitch_camera(dy * Cfg.MOUSE_SENS)
 
     def _pitch_camera(self, delta_deg):
