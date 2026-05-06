@@ -13,6 +13,7 @@ FLOATER_Z_OFFSET       =  2.0
 CAM_PITCH_DEFAULT      = 20.0
 CAM_PITCH_MIN          =  5.0
 CAM_PITCH_MAX          = 75.0
+SKYLOOK_AIM_LIFT       = 28.0    # how far up the lookAt point shifts while skylook held
 CAM_PITCH_CROUCH       = -8.0
 CAM_PITCH_SPEED        = 60.0
 CAM_ZOOM_SPEED         = 10.0
@@ -29,6 +30,9 @@ SQUISH_SPEED           =  9.0
 ANIM_IDLE_FREQ         =  1.2   # rad/s — respiração lenta do slime parado
 ANIM_WALK_FREQ         =  8.0   # rad/s — bounce de passada (~2 passos/s via abs(sin))
 ANIM_CRAWL_FREQ        =  6.0   # rad/s — ondulação do crouch-walk
+WALK_HOP_AMPLITUDE     =  0.45   # vertical hop offset on each step (units)
+WALK_LEAN_DEG          =  6.0    # forward/back tilt amplitude during walk
+CRAWL_HOP_AMPLITUDE    =  0.10   # subtle bob while crawling
 
 # ── Pulo ─────────────────────────────────────────────────────────────────
 JUMP_SPEED             = 10.0
@@ -42,9 +46,30 @@ GRAB_HOLD_TIME         = 0.07
 GRAB_RANGE             = 3.5    # distância máxima para coletar item
 
 # ── Camuflagem ───────────────────────────────────────────────────────────
+# Daylight debug mode: bright flat lighting so the layout is readable.
+# Flip to False to restore night-mansion atmosphere.
+DAYLIGHT_MODE          = False
+
+# Night-fog density (exponential, per world unit). 0 disables fog.
+NIGHT_FOG_DENSITY      = 0.010
+NIGHT_FOG_COLOR        = (0.025, 0.030, 0.050)
+
+# Moon disc parameters used by the skybox shader.
+MOON_DIR               = (0.55, -0.30, 0.78)   # world-space direction TO moon
+MOON_DISC_SIZE         = 0.030                  # angular radius in skybox uv
+MOON_COLOR             = (0.85, 0.88, 1.00)
+NEBULA_TINT            = (0.22, 0.18, 0.45)
+
 CAMO_ALPHA             = 0.22
-CAMO_DURATION          = 1.0
-CAMO_COOLDOWN          = 8.0
+CAMO_DURATION          = 1.0   # legacy; pool now governs duration
+CAMO_COOLDOWN          = 8.0   # legacy
+
+# ── Stealth power (pool driven by pickups) ───────────────────────────────
+STEALTH_POWER_MAX        = 100.0
+STEALTH_POWER_START      = 35.0
+STEALTH_DRAIN_PER_SEC    = 22.0   # power/sec while camouflaged
+STEALTH_MIN_TO_ACTIVATE  = 5.0    # need at least this much to engage
+STEALTH_PICKUP_VALUE     = 28.0   # power per orb collected
 
 # Interacao e cenario
 INTERACT_RANGE         = 4.0
@@ -59,8 +84,10 @@ MAX_GROWTH_SCALE       = 2.0    # escala máxima atingível
 SPEED_SCALE_EXPONENT   = 0.6
 
 # ── Beholders (inimigos) ────────────────────────────────────────────────
-BEHOLDER_COUNT                  = 4
+BEHOLDER_COUNT                  = 8
 BEHOLDER_HOVER_Z                = 2.4
+BEHOLDER_COLLISION_RADIUS       = 1.0
+BEHOLDER_MOVE_MAX_STEP          = 0.35
 BEHOLDER_BOB_FREQ               = 1.6     # rad/s
 BEHOLDER_BOB_AMPL               = 0.18
 BEHOLDER_PATROL_SPEED           = 3.5
@@ -162,5 +189,12 @@ ITEMS = {
         "shape":    "cylinder",
         "scale":    (0.55, 0.18),          # radius, height
         "ground_z":  0.09,
+    },
+    "stealth_orb": {
+        "value":    STEALTH_PICKUP_VALUE,
+        "color":    (0.30, 0.85, 1.00, 0.85),
+        "shape":    "sphere",
+        "scale":    (0.32, 0.32, 0.32),
+        "ground_z":  0.55,
     },
 }

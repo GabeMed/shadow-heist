@@ -4,18 +4,7 @@ from entities.carryable_mirror import CarryableMirror
 
 
 class ItemManager:
-    _ITEM_TYPES = [
-        "gold_bar",
-        "diamond",
-        "pearl_necklace",
-        "money_bundle",
-        "ruby",
-        "coin_pile",
-        "gold_bar",
-        "diamond",
-        "money_bundle",
-        "coin_pile",
-    ]
+    _ITEM_TYPES = ["stealth_orb"] * 10
 
     def __init__(self, base):
         self.base = base

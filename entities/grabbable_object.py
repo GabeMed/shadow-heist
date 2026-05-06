@@ -225,11 +225,13 @@ class GrabbableObject:
             np.reparentTo(self.node)
             np.setColor(*color)
 
-        else:  # sphere (ruby, fallback)
+        else:  # sphere (ruby, stealth_orb, fallback)
             sph = self.base.loader.loadModel("models/misc/sphere")
             sph.reparentTo(self.node)
             sph.setScale(*scale)
             sph.setColor(*color)
+            if len(color) >= 4 and color[3] < 1.0:
+                sph.setTransparency(TransparencyAttrib.M_alpha)
 
     def _build_money_bundle(self, scale, color):
         """Caixa verde plana + faixa de papel branca ao redor do meio."""

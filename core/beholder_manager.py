@@ -5,6 +5,7 @@ from panda3d.core import (
 )
 
 import config as Cfg
+from core.beholder_routes import room_patrol_waypoints, select_patrol_rooms
 from entities.beholder import Beholder, BeholderState
 
 
@@ -19,7 +20,7 @@ class BeholderManager:
         self.base       = base
         self.on_caught  = on_caught
         self.beholders  = []
-        self._cones_visible = True
+        self._cones_visible = False
 
         self.los_traverser = CollisionTraverser("beholder_los_trav")
         self.los_mask      = BitMask32.bit(1)
@@ -38,21 +39,19 @@ class BeholderManager:
         if house is None or house.beholder_model is None:
             return
 
-        rooms = list(house.rooms)
         excluded = {"portaria", "tesouro"}
-        patrol_rooms = [r for r in rooms if r.name not in excluded]
-        if len(patrol_rooms) < 2:
+        patrol_rooms = select_patrol_rooms(
+            list(house.rooms),
+            Cfg.BEHOLDER_COUNT,
+            excluded,
+            random,
+        )
+        if not patrol_rooms:
             return
 
-        random.shuffle(patrol_rooms)
-        count = min(Cfg.BEHOLDER_COUNT, max(1, len(patrol_rooms) // 2))
-
-        # Each beholder gets a 3-room loop.
-        for i in range(count):
-            base_idx = (i * 3) % len(patrol_rooms)
-            picks = [patrol_rooms[(base_idx + k) % len(patrol_rooms)]
-                     for k in range(3)]
-            waypoints = [Point3(r.center.x, r.center.y, 0.0) for r in picks]
+        # Room-local loops keep physical guards from trying to patrol through walls.
+        for room in patrol_rooms:
+            waypoints = [Point3(*wp) for wp in room_patrol_waypoints(room)]
             beholder = Beholder(
                 base           = self.base,
                 model_template = house.beholder_model,
@@ -61,6 +60,7 @@ class BeholderManager:
                 los_traverser  = self.los_traverser,
                 los_mask       = self.los_mask,
             )
+            beholder.set_cone_visible(self._cones_visible)
             self.beholders.append(beholder)
 
     def _handle_caught(self):

@@ -39,7 +39,7 @@ class RelicShard:
         # Glow light so shard reads in dark rooms.
         plight = PointLight(f"shard_{index}_light")
         plight.setColor((color[0], color[1], color[2], 1.0))
-        plight.setAttenuation(Vec3(1.0, 0.18, 0.04))
+        plight.setAttenuation(Vec3(1.0, 0.55, 0.45))
         self._light_np = self.root.attachNewNode(plight)
         self._light_np.setZ(1.2)
         base.render.setLight(self._light_np)
@@ -85,7 +85,7 @@ class RelicShard:
         self._spinner.setShaderOff()
         plight = PointLight(f"shard_{self.index}_light")
         plight.setColor((self.color[0], self.color[1], self.color[2], 1.0))
-        plight.setAttenuation(Vec3(1.0, 0.18, 0.04))
+        plight.setAttenuation(Vec3(1.0, 0.55, 0.45))
         self._light_np = self.root.attachNewNode(plight)
         self._light_np.setZ(1.2)
         self.base.render.setLight(self._light_np)

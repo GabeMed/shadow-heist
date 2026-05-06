@@ -5,9 +5,10 @@ from panda3d.core import TextNode
 import config as Cfg
 
 
-# Map bounds (world units). Tuned to fit the full castle + south escape zone.
-MAP_X_MIN, MAP_X_MAX = -75.0, 75.0
-MAP_Y_MIN, MAP_Y_MAX = -95.0, 90.0
+# Map bounds (world units). Tuned to fit the full castle, the moat ring,
+# the bridge, and the south spawn / escape zone.
+MAP_X_MIN, MAP_X_MAX = -100.0, 100.0
+MAP_Y_MIN, MAP_Y_MAX = -200.0, 100.0
 
 
 class Minimap:
